@@ -101,9 +101,10 @@ const testDefnJSON = `{
 }`
 
 type mockStore struct {
-	rows   []map[string]any
-	gqlLog []string
-	nextID int
+	rows       []map[string]any
+	gqlLog     []string
+	lastParams map[string]any
+	nextID     int
 }
 
 func defnMap(t *testing.T) map[string]any {
@@ -131,6 +132,7 @@ func condMatch(row, cond map[string]any) bool {
 
 func (m *mockStore) Query(_ context.Context, gql string, params map[string]any, _ *gostore.Context) ([]map[string]any, error) {
 	m.gqlLog = append(m.gqlLog, gql)
+	m.lastParams = params
 	var cond map[string]any
 	if params != nil {
 		cond, _ = params["c0"].(map[string]any)

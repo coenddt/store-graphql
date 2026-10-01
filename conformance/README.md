@@ -18,8 +18,8 @@
 
 ## 现状
 
-- v0：用例文件定格式并落第一份 `cases/users-graphql.json`；三端 smoke（`node/test/smoke.test.js`、`py/tests/test_smoke.py`、`go/adapter_test.go`）的用例矩阵与本目录语义对齐（mock store，不连真实库、不依赖 FFI）。
-- 待实现（v1）：三端 runner 直接消费 `cases/*.json` 执行并互验；CI 中三端比对。
+- **runner 已落地**（三端直接消费本目录用例执行断言）：`node/test/conformance.test.js`、`py/tests/test_conformance.py`、`go/conformance_test.go`——同一份 JSON、同一套 expect 契约，三端跑在同一次 `npm test` / `pytest` / `go test` 里，不连真实库、不依赖 FFI。
+- 待实现（v2）：CI 中三端互验报告；cases 扩充注记/override/extend 矩阵。
 
 ## 用例清单
 
