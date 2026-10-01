@@ -187,6 +187,19 @@ test('createYoga 上下文错误分类 403/401（spec/04，core ERR_PERMISSION: 
   assert.equal(r401.status, 401);
   const ok = await yoga(mk('alice'));
   assert.equal(ok.status, 200);
+
+  // 请求体上限 1MB（spec/04；Yoga maxRequestBodySize 显式收窄自默认 25MB）
+  const big = JSON.stringify({
+    query: '{ __typename }'.padEnd((1 << 20) + 100, ' '),
+  });
+  const r413 = await yoga(
+    new Request('http://localhost/graphql', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-user': 'alice' },
+      body: big,
+    })
+  );
+  assert.equal(r413.status, 413);
 });
 
 test('override / extend（spec/03 钩子 2、3）与未知路径校验', async () => {

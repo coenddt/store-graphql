@@ -292,6 +292,8 @@ function createYoga(store, opts = {}) {
   const yoga = createYogaImpl({
     schema,
     logging: opts.logging != null ? opts.logging : false,
+    // spec/04：请求体上限 1MB(Yoga 默认 25MB,显式收窄对齐 store-api 三端)
+    maxRequestBodySize: 1 << 20,
     // spec/04：上下文在包装层注入（Yoga 的 context factory 无法自定义 HTTP 状态码）
     context: undefined,
   });
