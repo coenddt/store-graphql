@@ -263,6 +263,30 @@ def test_query_depth_guard():
     assert "ERR_DEPTH:" in deep3.json()["errors"][0]["message"]
 
 
+def test_complexity_and_introspection_guard():
+    # spec/04:字段计数单元 + max_query_fields 超限 + introspection 开关
+    from graphql import parse
+
+    from store_graphql.adapter import query_field_count
+
+    assert query_field_count(parse("{ list_User { _id } }"))["fields"] == 2
+    assert query_field_count(parse("{ __schema { queryType { name } } }"))["introspection_used"] is True
+
+    from fastapi.testclient import TestClient
+
+    from store_graphql import create_app
+
+    client = TestClient(create_app(MockStore(), max_query_fields=2, introspection=False))
+    post = lambda q: client.post("/graphql", json={"query": q})  # noqa: E731
+
+    assert post("{ list_User { _id } }").status_code == 200
+    over = post("{ list_User { _id name } }")
+    assert over.status_code == 400 and "ERR_COMPLEXITY:" in over.json()["errors"][0]["message"]
+    assert post("{ __typename }").status_code == 200
+    intro = post("{ __schema { queryType { name } } }")
+    assert intro.status_code == 400 and "ERR_INTROSPECTION:" in intro.json()["errors"][0]["message"]
+
+
 def test_override_and_extend():
     store = MockStore()
 

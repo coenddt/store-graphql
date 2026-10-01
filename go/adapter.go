@@ -34,6 +34,55 @@ const maxBodyBytes = 1 << 20
 // 嵌套层数；超限 HTTP 400 + ERR_DEPTH: 稳定前缀。调整先改 spec 再三端同步。
 const maxQueryDepth = 10
 
+// maxQueryFields spec/04 复杂度守卫：AST 字段节点总数（别名不单列——字段计数已覆盖别名堆叠）。
+const maxQueryFields = 300
+
+// queryFieldCount 字段计数 + introspection 使用检测（fragment 展开计入，防环；__typename 放行）。
+func queryFieldCount(doc *ast.Document) (fields int, introspectionUsed bool) {
+	fragments := map[string]*ast.FragmentDefinition{}
+	for _, def := range doc.Definitions {
+		if fd, ok := def.(*ast.FragmentDefinition); ok && fd.Name != nil {
+			fragments[fd.Name.Value] = fd
+		}
+	}
+	var walkSelSet func(selSet *ast.SelectionSet, visiting map[string]bool)
+	walkSelSet = func(selSet *ast.SelectionSet, visiting map[string]bool) {
+		if selSet == nil {
+			return
+		}
+		for _, sel := range selSet.Selections {
+			switch s := sel.(type) {
+			case *ast.Field:
+				fields++
+				if !introspectionUsed && s.Name != nil && (s.Name.Value == "__schema" || s.Name.Value == "__type") {
+					introspectionUsed = true
+				}
+				walkSelSet(s.SelectionSet, visiting)
+			case *ast.InlineFragment:
+				walkSelSet(s.SelectionSet, visiting)
+			case *ast.FragmentSpread:
+				name := s.Name.Value
+				if !visiting[name] {
+					if frag, ok := fragments[name]; ok {
+						next := make(map[string]bool, len(visiting)+1)
+						for k := range visiting {
+							next[k] = true
+						}
+						next[name] = true
+						walkSelSet(frag.SelectionSet, next)
+					}
+				}
+			}
+		}
+	}
+	for _, def := range doc.Definitions {
+		if op, ok := def.(*ast.OperationDefinition); ok {
+			walkSelSet(op.SelectionSet, map[string]bool{})
+		}
+	}
+	return fields, introspectionUsed
+}
+
 // queryDepth 深度计算（三端同构算法）：FragmentSpread 按定义递归（visiting 防环）。
 func queryDepth(doc *ast.Document) int {
 	fragments := map[string]*ast.FragmentDefinition{}
@@ -109,6 +158,10 @@ type Options struct {
 	IDField string
 	// MaxQueryDepth spec/04 查询深度上限；0 取默认 10。
 	MaxQueryDepth int
+	// MaxQueryFields spec/04 复杂度上限（AST 字段节点总数）；0 取默认 300。
+	MaxQueryFields int
+	// DisableIntrospection spec/04：true 时含 __schema/__type 的请求 ⇒ 400 + ERR_INTROSPECTION:。
+	DisableIntrospection bool
 	// ContextProvider spec/04：每请求上下文钩子。nil 时不注入。
 	ContextProvider func(r *http.Request) (*gostore.Context, error)
 }
@@ -649,17 +702,35 @@ func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 			}
 			ctx = withActx(ctx, actx)
 		}
-		// spec/04 查询深度守卫：执行前独立 parse 检查（语法错不在此拦，交给 graphql.Do 原路径）
+		// spec/04 深度/复杂度/introspection 守卫：执行前独立 parse 检查
+		// （语法错不在此拦，交给 graphql.Do 原路径）
 		if body.Query != "" {
 			depthLimit := opts.MaxQueryDepth
 			if depthLimit <= 0 {
 				depthLimit = maxQueryDepth
+			}
+			fieldsLimit := opts.MaxQueryFields
+			if fieldsLimit <= 0 {
+				fieldsLimit = maxQueryFields
 			}
 			if doc, err := parser.Parse(parser.ParseParams{Source: body.Query}); err == nil {
 				if d := queryDepth(doc); d > depthLimit {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadRequest)
 					_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_DEPTH:查询深度 %d 超过上限 %d","extensions":{"code":"ERR_DEPTH"}}]}`, d, depthLimit)
+					return
+				}
+				fields, introUsed := queryFieldCount(doc)
+				if introUsed && opts.DisableIntrospection {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"errors":[{"message":"ERR_INTROSPECTION:introspection 已禁用","extensions":{"code":"ERR_INTROSPECTION"}}]}`))
+					return
+				}
+				if fields > fieldsLimit {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_COMPLEXITY:查询字段数 %d 超过上限 %d","extensions":{"code":"ERR_COMPLEXITY"}}]}`, fields, fieldsLimit)
 					return
 				}
 			}

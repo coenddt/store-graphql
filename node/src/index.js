@@ -36,6 +36,44 @@ const ARCHIVE_SUFFIX = 'Deleted';
 // ── spec/04 查询深度守卫 ──
 const MAX_QUERY_DEPTH = 10;
 
+// ── spec/04 复杂度守卫:AST 字段节点总数(别名不单列——字段计数已覆盖别名堆叠)──
+const MAX_QUERY_FIELDS = 300;
+
+// 字段计数 + introspection 使用检测(fragment 展开计入,visiting 防环;__typename 放行)
+function queryFieldCount(document) {
+  const fragments = {};
+  for (const def of document.definitions) {
+    if (def.kind === Kind.FRAGMENT_DEFINITION) fragments[def.name.value] = def;
+  }
+  let count = 0;
+  let introspectionUsed = false;
+  const walkSelSet = (selSet, visiting) => {
+    if (!selSet) return;
+    for (const sel of selSet.selections) {
+      if (sel.kind === Kind.FIELD) {
+        count += 1;
+        const name = sel.name.value;
+        if (!introspectionUsed && (name === '__schema' || name === '__type')) {
+          introspectionUsed = true;
+        }
+        walkSelSet(sel.selectionSet, visiting);
+      } else if (sel.kind === Kind.INLINE_FRAGMENT) {
+        walkSelSet(sel.selectionSet, visiting);
+      } else if (sel.kind === Kind.FRAGMENT_SPREAD) {
+        const name = sel.name.value;
+        if (!visiting.has(name)) {
+          const frag = fragments[name];
+          if (frag) walkSelSet(frag.selectionSet, new Set([...visiting, name]));
+        }
+      }
+    }
+  };
+  for (const def of document.definitions) {
+    if (def.kind === Kind.OPERATION_DEFINITION) walkSelSet(def.selectionSet, new Set());
+  }
+  return { fields: count, introspectionUsed };
+}
+
 // 深度 = 从 operation 顶层 selectionSet 起的最大字段嵌套层数;FragmentSpread 按定义
 // 递归(visiting 防环),InlineFragment 原地展开;取所有 operation 的最大值。
 function queryDepthOf(document) {
@@ -344,12 +382,14 @@ function createYoga(store, opts = {}) {
   const { createYoga: createYogaImpl } = yogaMod;
   const schema = opts.schema || buildGraphQLSchema(store, opts);
   const depthLimit = opts.maxQueryDepth != null ? opts.maxQueryDepth : MAX_QUERY_DEPTH;
+  const fieldsLimit = opts.maxQueryFields != null ? opts.maxQueryFields : MAX_QUERY_FIELDS;
+  const introspectionEnabled = opts.introspection !== false;
   const yoga = createYogaImpl({
     schema,
     logging: opts.logging != null ? opts.logging : false,
     // spec/04：请求体上限 1MB(Yoga 默认 25MB,显式收窄对齐 store-api 三端)
     maxRequestBodySize: 1 << 20,
-    // spec/04：查询深度守卫(onExecute 期拦截,extensions.http.status 定 400)
+    // spec/04:深度/复杂度/introspection 守卫(onExecute 期拦截,extensions.http.status 定 400)
     plugins: [
       {
         onExecute({ args }) {
@@ -357,6 +397,17 @@ function createYoga(store, opts = {}) {
           if (d > depthLimit) {
             throw new GraphQLError(`ERR_DEPTH:查询深度 ${d} 超过上限 ${depthLimit}`, {
               extensions: { code: 'ERR_DEPTH', http: { status: 400 } },
+            });
+          }
+          const { fields, introspectionUsed } = queryFieldCount(args.document);
+          if (introspectionUsed && !introspectionEnabled) {
+            throw new GraphQLError('ERR_INTROSPECTION:introspection 已禁用', {
+              extensions: { code: 'ERR_INTROSPECTION', http: { status: 400 } },
+            });
+          }
+          if (fields > fieldsLimit) {
+            throw new GraphQLError(`ERR_COMPLEXITY:查询字段数 ${fields} 超过上限 ${fieldsLimit}`, {
+              extensions: { code: 'ERR_COMPLEXITY', http: { status: 400 } },
             });
           }
         },
@@ -392,4 +443,5 @@ module.exports = {
   exportSDL,
   createYoga,
   queryDepthOf,
+  queryFieldCount,
 };

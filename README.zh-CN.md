@@ -11,6 +11,8 @@
 
 设计规则：**GraphQL 只是 GQL 的又一层 HTTP 皮肤** —— 适配层零语义发明；一切映射到 store 既有的 schema / GQL / RBAC 语义，经**投影下推**一次查询取整棵数据（无 N+1）。
 
+**对外部署**：生产清单（上下文 fail-open 对策、网关配置、错误前缀告警表）见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
+
 姊妹仓库：[store-api](https://github.com/coenddt/store-api)（同一数据层的 RESTful 皮肤，共享同一份 JSON schema 事实源）。
 
 ## 快速上手

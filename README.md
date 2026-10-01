@@ -11,6 +11,8 @@ Standard GraphQL API auto-generation for the common-store data layer family (nod
 
 Design rule: **GraphQL is just another HTTP skin over GQL** — the adapters invent zero semantics of their own; everything maps onto store's existing schema / GQL / RBAC semantics, with projection pushdown (no N+1).
 
+**Going to production?** See [DEPLOYMENT.md](./DEPLOYMENT.md) — context fail-open countermeasures, built-in guards (body 1MB / limit 50·1000 / depth 10 / fields 300 / introspection switch), gateway reference config, and the error-prefix alerting table.
+
 ## Customization hooks (after auto-generation)
 
 1. **Annotations** — `"x-graphql": {"hidden": true}` / `{"readonly": true}` on the schema defn

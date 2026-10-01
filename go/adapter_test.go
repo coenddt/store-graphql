@@ -15,10 +15,20 @@ import (
 
 	gostore "github.com/coenddt/go-store"
 	"github.com/graphql-go/graphql"
+	"github.com/graphql-go/graphql/language/ast"
 	"github.com/graphql-go/graphql/language/parser"
 )
 
 func jsonNewDecoder(r io.Reader) *json.Decoder { return json.NewDecoder(r) }
+
+func mustParse(t *testing.T, src string) *ast.Document {
+	t.Helper()
+	doc, err := parser.Parse(parser.ParseParams{Source: src})
+	if err != nil {
+		t.Fatalf("parse 失败: %v", err)
+	}
+	return doc
+}
 
 const introspectionQuery = `query {
   __schema {
@@ -318,6 +328,43 @@ func TestQueryDepthGuard(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "ERR_DEPTH:") {
 		t.Fatalf("超限应带 ERR_DEPTH: 前缀: %s", rec.Body.String())
+	}
+}
+
+func TestComplexityAndIntrospectionGuard(t *testing.T) {
+	// spec/04:字段计数单元 + MaxQueryFields 超限 + DisableIntrospection
+	fields, introUsed := queryFieldCount(mustParse(t, `{ list_User { _id } }`))
+	if fields != 2 || introUsed {
+		t.Fatalf("字段计数应为 2 且非 introspection,实际 %d/%v", fields, introUsed)
+	}
+	if _, introUsed := queryFieldCount(mustParse(t, `{ __schema { queryType { name } } }`)); !introUsed {
+		t.Fatal("__schema 应检出 introspection 使用")
+	}
+
+	st := newMockStore(t)
+	schema := buildTestSchema(t, st, Options{})
+	handler := Handler(schema, Options{MaxQueryFields: 2, DisableIntrospection: true})
+	post := func(query string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(query))
+		req.Header.Set("Content-Type", "application/json")
+		handler(rec, req)
+		return rec
+	}
+
+	if rec := post(`{"query":"{ list_User { _id } }"}`); rec.Code != http.StatusOK {
+		t.Fatalf("字段数 2(边界)应放行,实际 %d", rec.Code)
+	}
+	rec := post(`{"query":"{ list_User { _id name } }"}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ERR_COMPLEXITY:") {
+		t.Fatalf("超字段上限应 400 + ERR_COMPLEXITY:,实际 %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := post(`{"query":"{ __typename }"}`); rec.Code != http.StatusOK {
+		t.Fatalf("__typename 应放行,实际 %d", rec.Code)
+	}
+	rec = post(`{"query":"{ __schema { queryType { name } } }"}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ERR_INTROSPECTION:") {
+		t.Fatalf("禁用后 __schema 应 400 + ERR_INTROSPECTION:,实际 %d %s", rec.Code, rec.Body.String())
 	}
 }
 

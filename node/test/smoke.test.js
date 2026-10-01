@@ -257,6 +257,36 @@ test('查询深度守卫：算法单元 + HTTP 层 400（spec/04）', async () =
   assert.ok(body.errors[0].message.includes('ERR_DEPTH:'));
 });
 
+test('复杂度与 introspection 守卫（spec/04）', async () => {
+  const { queryFieldCount, createYoga } = require('../src/index');
+  const doc = parse('{ list_User { _id } }');
+  assert.equal(queryFieldCount(doc).fields, 2);
+  assert.equal(queryFieldCount(parse('{ __schema { queryType { name } } }')).introspectionUsed, true);
+
+  const store = makeMockStore();
+  const { yoga } = createYoga(store, { maxQueryFields: 2, introspection: false });
+  const post = (query) =>
+    yoga(
+      new Request('http://localhost/graphql', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query }),
+      })
+    );
+
+  // 字段数 = 2(边界)放行;3 超限 ⇒ 400 + ERR_COMPLEXITY:
+  assert.equal((await post('{ list_User { _id } }')).status, 200);
+  const over = await post('{ list_User { _id name } }');
+  assert.equal(over.status, 400);
+  assert.ok((await over.json()).errors[0].message.includes('ERR_COMPLEXITY:'));
+
+  // __typename 放行(无泄露面);__schema ⇒ 400 + ERR_INTROSPECTION:
+  assert.equal((await post('{ __typename }')).status, 200);
+  const intro = await post('{ __schema { queryType { name } } }');
+  assert.equal(intro.status, 400);
+  assert.ok((await intro.json()).errors[0].message.includes('ERR_INTROSPECTION:'));
+});
+
 test('override / extend（spec/03 钩子 2、3）与未知路径校验', async () => {
   const store = makeMockStore();
   const schema = buildGraphQLSchema(store, {

@@ -53,9 +53,10 @@
 
 | 攻击面 | v0 状态 | 责任边界 |
 |---|---|---|
-| 查询深度攻击 | **已设限**（本节：深度 10，超限 400 + `ERR_DEPTH:`） | 复杂度/别名字数等精细化配额列 v2；部署侧反代限流仍建议叠加 |
-| 错误信息泄露（CWE-209） | spec 决策：message 原样透传（内网工具定位；自动反馈原则优先） | 对外部署在网关层做错误映射 |
-| Introspection 泄露 | 设计决策：开启（文档/codegen 依赖） | 对外部署在网关层按环境拦截 |
+| 查询深度攻击 | **已设限**（本节：深度 10，超限 400 + `ERR_DEPTH:`） | 部署侧反代限流仍建议叠加 |
+| 查询复杂度（字段数） | **已设限**：`MAX_QUERY_FIELDS = 300`（AST 字段节点总数，fragment 展开计入、防环；超限 400 + `ERR_COMPLEXITY:`）。**别名不单列**——别名是字段的属性，字段计数已覆盖别名堆叠 | 基于权重的 cost 分析列 v2；`maxQueryFields` 可覆盖（0 = 默认） |
+| Introspection 泄露 | **可配置**：默认开启（文档/codegen 依赖）；`introspection: false` 时含 `__schema`/`__type` 字段的请求 ⇒ 400 + `ERR_INTROSPECTION:`（`__typename` 放行，无泄露面） | 对外部署建议关闭 + 网关层兜底；开关与网关双保险见 [DEPLOYMENT.md](../DEPLOYMENT.md) |
+| 错误信息泄露（CWE-209） | spec 决策：message 原样透传（内网工具定位；自动反馈原则优先） | 对外部署在网关层做错误映射；错误前缀告警表见 [DEPLOYMENT.md](../DEPLOYMENT.md) |
 | 批量查询（batching） | 关闭：三端单请求单文档 | — |
 | CSRF | GET 无副作用（仅文档页）；POST JSON 非简单请求，跨站被 CORS 预检拦截 | — |
 | 请求体大小 | 1MB 上限（本节） | — |

@@ -39,6 +39,43 @@ LIST_LIMIT_MAX = 1000
 # FragmentSpread 按定义递归(visiting 防环);超限 HTTP 400 + ERR_DEPTH: 稳定前缀。
 MAX_QUERY_DEPTH = 10
 
+# spec/04 复杂度守卫:AST 字段节点总数(别名不单列——字段计数已覆盖别名堆叠)。
+MAX_QUERY_FIELDS = 300
+
+
+def query_field_count(document):
+    """字段计数 + introspection 使用检测(fragment 展开计入,防环;__typename 放行)。"""
+    fragments = {
+        d.name.value: d
+        for d in document.definitions
+        if d.kind == "fragment_definition"
+    }
+    out = {"fields": 0, "introspection_used": False}
+
+    def walk_sel_set(sel_set, visiting):
+        if sel_set is None:
+            return
+        for sel in sel_set.selections:
+            if sel.kind == K_FIELD:
+                out["fields"] += 1
+                name = sel.name.value
+                if not out["introspection_used"] and name in ("__schema", "__type"):
+                    out["introspection_used"] = True
+                walk_sel_set(sel.selection_set, visiting)
+            elif sel.kind == K_INLINE_FRAGMENT:
+                walk_sel_set(sel.selection_set, visiting)
+            elif sel.kind == K_FRAGMENT_SPREAD:
+                if sel.name.value in visiting:
+                    continue
+                frag = fragments.get(sel.name.value)
+                if frag:
+                    walk_sel_set(frag.selection_set, visiting | {sel.name.value})
+
+    for d in document.definitions:
+        if d.kind == "operation_definition":
+            walk_sel_set(d.selection_set, set())
+    return out
+
 
 def query_depth(document):
     fragments = {
@@ -418,6 +455,8 @@ def create_app(
     extensions=None,
     id_field="_id",
     max_query_depth=None,
+    max_query_fields=None,
+    introspection=True,
 ):
     try:
         from fastapi import FastAPI, Request
@@ -474,26 +513,54 @@ def create_app(
                 )
             # spec/04：None 同样显式注入（清除语义必须落地，防身份跨请求残留）
             store.set_context(ctx)
-        # spec/04 查询深度守卫:执行前独立 parse 检查(语法错不在此拦,维持执行器原路径);
-        # 双 parse 成本微秒级,如实标注(spec/04)
+        # spec/04 深度/复杂度/introspection 守卫:执行前独立 parse 检查
+        # (语法错不在此拦,维持执行器原路径;双 parse 成本微秒级,如实标注 spec/04)
         depth_limit = MAX_QUERY_DEPTH if max_query_depth is None else max_query_depth
+        fields_limit = MAX_QUERY_FIELDS if max_query_fields is None else max_query_fields
         query_str = body.get("query") or ""
         try:
-            depth = query_depth(parse(query_str))
+            doc = parse(query_str)
         except Exception:  # noqa: BLE001 — 语法解析失败交给执行器原路径报错
-            depth = 0
-        if depth > depth_limit:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "errors": [
-                        {
-                            "message": f"ERR_DEPTH:查询深度 {depth} 超过上限 {depth_limit}",
-                            "extensions": {"code": "ERR_DEPTH"},
-                        }
-                    ]
-                },
-            )
+            doc = None
+        if doc is not None:
+            depth = query_depth(doc)
+            if depth > depth_limit:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "errors": [
+                            {
+                                "message": f"ERR_DEPTH:查询深度 {depth} 超过上限 {depth_limit}",
+                                "extensions": {"code": "ERR_DEPTH"},
+                            }
+                        ]
+                    },
+                )
+            usage = query_field_count(doc)
+            if usage["introspection_used"] and not introspection:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "errors": [
+                            {
+                                "message": "ERR_INTROSPECTION:introspection 已禁用",
+                                "extensions": {"code": "ERR_INTROSPECTION"},
+                            }
+                        ]
+                    },
+                )
+            if usage["fields"] > fields_limit:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "errors": [
+                            {
+                                "message": f"ERR_COMPLEXITY:查询字段数 {usage['fields']} 超过上限 {fields_limit}",
+                                "extensions": {"code": "ERR_COMPLEXITY"},
+                            }
+                        ]
+                    },
+                )
         result = await graphql(
             gql_schema,
             query_str,
