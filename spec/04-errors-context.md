@@ -44,7 +44,16 @@
 | **权限上下文缺失（fail-open）** | **core 信任模型：`ctx: None` = 跳过权限检查，默认放行**（`core/src/permission.rs:9-20` 明文契约）。适配层不配 ContextProvider ⇒ 端点匿名可读写全库 | 生产部署必做两件事：① 配置 ContextProvider（每请求产出身份，返回 None 也显式落地）；② 开启 fail-secure 开关 `store.setRequireContext(true)`（node `index.js:247` / py `__init__.py:242`；rust host `set_require_context`，`host/src/lib.rs:143`）——开启后 ctx 缺失在 plan 入口显式报错，与 `Context::system()` 的内部调用语义彻底分离 |
 | 上下文错误分类 | PermissionError（core `ERR_PERMISSION:` 稳定前缀）⇒ 403；其余 ⇒ 401；禁按文案匹配 | — |
 | 异步取消 / 中断 | 已核实安全：query 的 two-phase 为纯读；remove 多段写（归档+删除）在同一事务内，失败显式 rollback（`host/src/exec.rs:35-67`，「禁已删未归档静默失守」）；future 被 drop 时 sqlx 未提交事务自动回滚 | 仅 Rust host 直连路径受益此结构性保证；node/py/go 经各自驱动 |
-| 查询深度/复杂度攻击 | **未设限（v1）**：深层关系子查询可放大后端负载；部署侧先以反代限流/超时兜底 | v1 接 depth/cost 限制（node 可用 plugin-query-depth，py/go 手写 AST 深度计算） |
+## 查询深度守卫（2026-10 v1 落地）
+
+- 算法三端同构：**深度 = 从 operation 顶层 selectionSet 起的最大字段嵌套层数**（顶层字段为第 1 层；`InlineFragment` 原地展开；`FragmentSpread` 按 document 的 fragment 定义递归，已访问集合防环）；取所有 operation 的最大值
+- 上限 **`MAX_QUERY_DEPTH = 10`**（合法业务嵌套 2~4 层：模型→关系→关系，余量充足；常量可调，先改本 spec 再三端同步）
+- 超限 ⇒ **HTTP 400**，errors 首条 message 带稳定前缀 **`ERR_DEPTH:`**（请求级校验失败，区别于执行期错误的 200 + errors；node 经 Yoga 插件 `onExecute` 抛 `GraphQLError` + `extensions.http.status`，py/go 在执行前独立 parse 检查）
+- 语法错误不在此拦截（维持执行器原路径 200 + errors），双 parse 成本微秒级（py/go），如实标注
+
+| 攻击面 | v0 状态 | 责任边界 |
+|---|---|---|
+| 查询深度攻击 | **已设限**（本节：深度 10，超限 400 + `ERR_DEPTH:`） | 复杂度/别名字数等精细化配额列 v2；部署侧反代限流仍建议叠加 |
 | 错误信息泄露（CWE-209） | spec 决策：message 原样透传（内网工具定位；自动反馈原则优先） | 对外部署在网关层做错误映射 |
 | Introspection 泄露 | 设计决策：开启（文档/codegen 依赖） | 对外部署在网关层按环境拦截 |
 | 批量查询（batching） | 关闭：三端单请求单文档 | — |

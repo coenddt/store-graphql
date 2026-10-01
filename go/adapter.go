@@ -24,10 +24,66 @@ import (
 	"github.com/coenddt/go-store"
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/graphql/language/ast"
+	"github.com/graphql-go/graphql/language/parser"
 )
 
 // maxBodyBytes 请求体上限（对齐 store-api/go/adapter.go 的 1MB 先例，防大 body 撑内存）。
 const maxBodyBytes = 1 << 20
+
+// maxQueryDepth spec/04 查询深度守卫：深度 = 从 operation 顶层 selectionSet 起的最大字段
+// 嵌套层数；超限 HTTP 400 + ERR_DEPTH: 稳定前缀。调整先改 spec 再三端同步。
+const maxQueryDepth = 10
+
+// queryDepth 深度计算（三端同构算法）：FragmentSpread 按定义递归（visiting 防环）。
+func queryDepth(doc *ast.Document) int {
+	fragments := map[string]*ast.FragmentDefinition{}
+	for _, def := range doc.Definitions {
+		if fd, ok := def.(*ast.FragmentDefinition); ok && fd.Name != nil {
+			fragments[fd.Name.Value] = fd
+		}
+	}
+	var depthOfSelSet func(selSet *ast.SelectionSet, visiting map[string]bool) int
+	depthOfSelSet = func(selSet *ast.SelectionSet, visiting map[string]bool) int {
+		if selSet == nil {
+			return 0
+		}
+		max := 0
+		for _, sel := range selSet.Selections {
+			d := 0
+			switch s := sel.(type) {
+			case *ast.Field:
+				d = 1 + depthOfSelSet(s.SelectionSet, visiting)
+			case *ast.InlineFragment:
+				d = depthOfSelSet(s.SelectionSet, visiting)
+			case *ast.FragmentSpread:
+				name := s.Name.Value
+				if !visiting[name] {
+					if frag, ok := fragments[name]; ok {
+						next := make(map[string]bool, len(visiting)+1)
+						for k := range visiting {
+							next[k] = true
+						}
+						next[name] = true
+						d = depthOfSelSet(frag.SelectionSet, next)
+					}
+				}
+			}
+			if d > max {
+				max = d
+			}
+		}
+		return max
+	}
+	max := 0
+	for _, def := range doc.Definitions {
+		if op, ok := def.(*ast.OperationDefinition); ok {
+			if d := depthOfSelSet(op.SelectionSet, map[string]bool{}); d > max {
+				max = d
+			}
+		}
+	}
+	return max
+}
 
 const archiveSuffix = "Deleted"
 
@@ -51,6 +107,8 @@ type Options struct {
 	Extensions map[string]graphql.Fields
 	// IDField 单条主键字段名（spec/02：默认 "_id"）。
 	IDField string
+	// MaxQueryDepth spec/04 查询深度上限；0 取默认 10。
+	MaxQueryDepth int
 	// ContextProvider spec/04：每请求上下文钩子。nil 时不注入。
 	ContextProvider func(r *http.Request) (*gostore.Context, error)
 }
@@ -590,6 +648,21 @@ func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 				return
 			}
 			ctx = withActx(ctx, actx)
+		}
+		// spec/04 查询深度守卫：执行前独立 parse 检查（语法错不在此拦，交给 graphql.Do 原路径）
+		if body.Query != "" {
+			depthLimit := opts.MaxQueryDepth
+			if depthLimit <= 0 {
+				depthLimit = maxQueryDepth
+			}
+			if doc, err := parser.Parse(parser.ParseParams{Source: body.Query}); err == nil {
+				if d := queryDepth(doc); d > depthLimit {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_DEPTH:查询深度 %d 超过上限 %d","extensions":{"code":"ERR_DEPTH"}}]}`, d, depthLimit)
+					return
+				}
+			}
 		}
 		result := graphql.Do(graphql.Params{
 			Schema:         schema,

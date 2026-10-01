@@ -25,11 +25,53 @@ const {
   GraphQLInt,
   GraphQLFloat,
   GraphQLBoolean,
+  GraphQLError,
   Kind,
+  parse,
   printSchema,
 } = require('graphql');
 
 const ARCHIVE_SUFFIX = 'Deleted';
+
+// ── spec/04 查询深度守卫 ──
+const MAX_QUERY_DEPTH = 10;
+
+// 深度 = 从 operation 顶层 selectionSet 起的最大字段嵌套层数;FragmentSpread 按定义
+// 递归(visiting 防环),InlineFragment 原地展开;取所有 operation 的最大值。
+function queryDepthOf(document) {
+  const fragments = {};
+  for (const def of document.definitions) {
+    if (def.kind === Kind.FRAGMENT_DEFINITION) fragments[def.name.value] = def;
+  }
+  const depthOfSelSet = (selSet, visiting) => {
+    if (!selSet) return 0;
+    let max = 0;
+    for (const sel of selSet.selections) {
+      let d = 0;
+      if (sel.kind === Kind.FIELD) {
+        d = 1 + depthOfSelSet(sel.selectionSet, visiting);
+      } else if (sel.kind === Kind.INLINE_FRAGMENT) {
+        d = depthOfSelSet(sel.selectionSet, visiting);
+      } else if (sel.kind === Kind.FRAGMENT_SPREAD) {
+        const name = sel.name.value;
+        if (!visiting.has(name)) {
+          const frag = fragments[name];
+          d = frag ? depthOfSelSet(frag.selectionSet, new Set([...visiting, name])) : 0;
+        }
+      }
+      if (d > max) max = d;
+    }
+    return max;
+  };
+  let max = 0;
+  for (const def of document.definitions) {
+    if (def.kind === Kind.OPERATION_DEFINITION) {
+      const d = depthOfSelSet(def.selectionSet, new Set());
+      if (d > max) max = d;
+    }
+  }
+  return max;
+}
 
 // ── spec/01：归档表过滤（与 store-api 三端逐字一致）──
 function filterArchived(names) {
@@ -301,11 +343,25 @@ function createYoga(store, opts = {}) {
   }
   const { createYoga: createYogaImpl } = yogaMod;
   const schema = opts.schema || buildGraphQLSchema(store, opts);
+  const depthLimit = opts.maxQueryDepth != null ? opts.maxQueryDepth : MAX_QUERY_DEPTH;
   const yoga = createYogaImpl({
     schema,
     logging: opts.logging != null ? opts.logging : false,
     // spec/04：请求体上限 1MB(Yoga 默认 25MB,显式收窄对齐 store-api 三端)
     maxRequestBodySize: 1 << 20,
+    // spec/04：查询深度守卫(onExecute 期拦截,extensions.http.status 定 400)
+    plugins: [
+      {
+        onExecute({ args }) {
+          const d = queryDepthOf(args.document);
+          if (d > depthLimit) {
+            throw new GraphQLError(`ERR_DEPTH:查询深度 ${d} 超过上限 ${depthLimit}`, {
+              extensions: { code: 'ERR_DEPTH', http: { status: 400 } },
+            });
+          }
+        },
+      },
+    ],
     // spec/04：上下文在包装层注入（Yoga 的 context factory 无法自定义 HTTP 状态码）
     context: undefined,
   });
@@ -335,4 +391,5 @@ module.exports = {
   buildGraphQLSchema,
   exportSDL,
   createYoga,
+  queryDepthOf,
 };

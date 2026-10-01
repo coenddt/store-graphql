@@ -5,6 +5,7 @@ import json
 
 from graphql import (
     graphql,
+    parse,
     GraphQLArgument,
     GraphQLBoolean,
     GraphQLField,
@@ -33,6 +34,50 @@ ARCHIVE_SUFFIX = "Deleted"
 # 适配层守上界;调整先改 spec 再三端同步。
 LIST_LIMIT_DEFAULT = 50
 LIST_LIMIT_MAX = 1000
+
+# spec/04 查询深度守卫:深度 = 从 operation 顶层 selectionSet 起的最大字段嵌套层数,
+# FragmentSpread 按定义递归(visiting 防环);超限 HTTP 400 + ERR_DEPTH: 稳定前缀。
+MAX_QUERY_DEPTH = 10
+
+
+def query_depth(document):
+    fragments = {
+        d.name.value: d
+        for d in document.definitions
+        if d.kind == "fragment_definition"
+    }
+
+    def depth_of_sel_set(sel_set, visiting):
+        if sel_set is None:
+            return 0
+        max_d = 0
+        for sel in sel_set.selections:
+            if sel.kind == K_FIELD:
+                d = 1 + depth_of_sel_set(sel.selection_set, visiting)
+            elif sel.kind == K_INLINE_FRAGMENT:
+                d = depth_of_sel_set(sel.selection_set, visiting)
+            elif sel.kind == K_FRAGMENT_SPREAD:
+                if sel.name.value in visiting:
+                    continue
+                frag = fragments.get(sel.name.value)
+                d = (
+                    depth_of_sel_set(frag.selection_set, visiting | {sel.name.value})
+                    if frag
+                    else 0
+                )
+            else:
+                d = 0
+            if d > max_d:
+                max_d = d
+        return max_d
+
+    max_d = 0
+    for d in document.definitions:
+        if d.kind == "operation_definition":
+            od = depth_of_sel_set(d.selection_set, set())
+            if od > max_d:
+                max_d = od
+    return max_d
 
 # spec/05：GraphiQL 文档页（CDN 版，GET /graphql 返回；POST 才执行查询）
 GRAPHIQL_HTML = """<!doctype html>
@@ -372,6 +417,7 @@ def create_app(
     overrides=None,
     extensions=None,
     id_field="_id",
+    max_query_depth=None,
 ):
     try:
         from fastapi import FastAPI, Request
@@ -428,9 +474,29 @@ def create_app(
                 )
             # spec/04：None 同样显式注入（清除语义必须落地，防身份跨请求残留）
             store.set_context(ctx)
+        # spec/04 查询深度守卫:执行前独立 parse 检查(语法错不在此拦,维持执行器原路径);
+        # 双 parse 成本微秒级,如实标注(spec/04)
+        depth_limit = MAX_QUERY_DEPTH if max_query_depth is None else max_query_depth
+        query_str = body.get("query") or ""
+        try:
+            depth = query_depth(parse(query_str))
+        except Exception:  # noqa: BLE001 — 语法解析失败交给执行器原路径报错
+            depth = 0
+        if depth > depth_limit:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "errors": [
+                        {
+                            "message": f"ERR_DEPTH:查询深度 {depth} 超过上限 {depth_limit}",
+                            "extensions": {"code": "ERR_DEPTH"},
+                        }
+                    ]
+                },
+            )
         result = await graphql(
             gql_schema,
-            body.get("query") or "",
+            query_str,
             variable_values=body.get("variables"),
             operation_name=body.get("operationName"),
         )

@@ -237,6 +237,32 @@ def test_security_matrix():
     assert ok.json()["data"]["__typename"] == "Query"
 
 
+def test_query_depth_guard():
+    # spec/04:深度算法单元 + HTTP 层小阈值 400
+    from graphql import parse
+
+    from store_graphql.adapter import MAX_QUERY_DEPTH, query_depth
+
+    deep = "{ " + "a { " * 10 + "x " + "}" * 10 + " }"
+    assert MAX_QUERY_DEPTH == 10
+    assert query_depth(parse(deep)) == 11
+    assert query_depth(parse("{ list_User { _id } }")) == 2
+    # fragment 深度计入(非环)+ 环引用给有限值不崩
+    assert query_depth(parse("query { ...A } fragment A on Query { list_User { _id } }")) == 2
+    assert query_depth(parse("query { ...A } fragment A on Query { list_User { ...A } }")) == 1
+
+    from fastapi.testclient import TestClient
+
+    from store_graphql import create_app
+
+    client = TestClient(create_app(MockStore(), max_query_depth=2))
+    ok = client.post("/graphql", json={"query": "{ list_User { _id } }"})
+    assert ok.status_code == 200
+    deep3 = client.post("/graphql", json={"query": "{ list_User { profile { bio } } }"})
+    assert deep3.status_code == 400
+    assert "ERR_DEPTH:" in deep3.json()["errors"][0]["message"]
+
+
 def test_override_and_extend():
     store = MockStore()
 

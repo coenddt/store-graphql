@@ -15,6 +15,7 @@ import (
 
 	gostore "github.com/coenddt/go-store"
 	"github.com/graphql-go/graphql"
+	"github.com/graphql-go/graphql/language/parser"
 )
 
 func jsonNewDecoder(r io.Reader) *json.Decoder { return json.NewDecoder(r) }
@@ -84,7 +85,8 @@ const testDefnJSON = `{
 	"fields": {
 		"_id": {"type": "string", "description": "主键，u 前缀"},
 		"name": {"type": "string"},
-		"age": {"type": "int"}
+		"age": {"type": "int"},
+		"profile": {"type": "object", "fields": {"bio": {"type": "string"}}}
 	}
 }`
 
@@ -269,6 +271,53 @@ func TestLimitGuard(t *testing.T) {
 		VariableValues: map[string]interface{}{"l": 1001}})
 	if !over.HasErrors() || !strings.Contains(over.Errors[0].Error(), "ERR_LIMIT:") {
 		t.Fatalf("超限应带 ERR_LIMIT: 前缀: %v", over.Errors)
+	}
+}
+
+func TestQueryDepthGuard(t *testing.T) {
+	// spec/04:深度算法单元(11 层纯 AST,fragment 计入+环不崩)+ HTTP 层小阈值 400
+	deep := "{ " + strings.Repeat("a { ", 10) + "x " + strings.Repeat("}", 10) + " }"
+	doc, err := parser.Parse(parser.ParseParams{Source: deep})
+	if err != nil {
+		t.Fatalf("深查询 parse 失败: %v", err)
+	}
+	if d := queryDepth(doc); d != 11 {
+		t.Fatalf("11 层深度应为 11,实际 %d", d)
+	}
+	shallow, _ := parser.Parse(parser.ParseParams{Source: `{ list_User { _id } }`})
+	if d := queryDepth(shallow); d != 2 {
+		t.Fatalf("浅查询深度应为 2,实际 %d", d)
+	}
+	fragDoc, _ := parser.Parse(parser.ParseParams{
+		Source: `query { ...A } fragment A on Query { list_User { _id } }`})
+	if d := queryDepth(fragDoc); d != 2 {
+		t.Fatalf("fragment 深度应计入,实际 %d", d)
+	}
+	cycleDoc, _ := parser.Parse(parser.ParseParams{
+		Source: `query { ...A } fragment A on Query { list_User { ...A } }`})
+	if d := queryDepth(cycleDoc); d != 1 {
+		t.Fatalf("环引用应给有限值(防环),实际 %d", d)
+	}
+
+	st := newMockStore(t)
+	schema := buildTestSchema(t, st, Options{})
+	handler := Handler(schema, Options{MaxQueryDepth: 2})
+	post := func(query string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(query))
+		req.Header.Set("Content-Type", "application/json")
+		handler(rec, req)
+		return rec
+	}
+	if rec := post(`{"query":"{ list_User { _id } }"}`); rec.Code != http.StatusOK {
+		t.Fatalf("深度 2 应放行,实际 %d", rec.Code)
+	}
+	rec := post(`{"query":"{ list_User { profile { bio } } }"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("深度 3 应 400,实际 %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "ERR_DEPTH:") {
+		t.Fatalf("超限应带 ERR_DEPTH: 前缀: %s", rec.Body.String())
 	}
 }
 

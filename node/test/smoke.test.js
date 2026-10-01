@@ -227,6 +227,36 @@ test('createYoga 上下文错误分类 403/401（spec/04，core ERR_PERMISSION: 
   assert.equal(r413.status, 413);
 });
 
+test('查询深度守卫：算法单元 + HTTP 层 400（spec/04）', async () => {
+  const { queryDepthOf, createYoga } = require('../src/index');
+
+  // 单元:11 层纯 AST(不经 schema 校验)
+  const deepQ = '{ ' + 'a { '.repeat(10) + 'x ' + '}'.repeat(10) + ' }';
+  assert.equal(queryDepthOf(parse(deepQ)), 11);
+  assert.equal(queryDepthOf(parse('{ list_User { _id } }')), 2);
+  // fragment 深度计入(非环)+ 环引用给有限值不崩
+  assert.equal(queryDepthOf(parse('query { ...A } fragment A on Query { list_User { _id } }')), 2);
+  assert.equal(queryDepthOf(parse('query { ...A } fragment A on Query { list_User { ...A } }')), 1);
+
+  // HTTP 层:maxQueryDepth=2,深度 3 的合法查询 ⇒ 400 + ERR_DEPTH:
+  const store = makeMockStore();
+  const { yoga } = createYoga(store, { maxQueryDepth: 2 });
+  const post = (query) =>
+    yoga(
+      new Request('http://localhost/graphql', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query }),
+      })
+    );
+  const ok = await post('{ list_User { _id } }'); // 深度 2,放行
+  assert.equal(ok.status, 200);
+  const deep3 = await post('{ list_User { profile { bio } } }'); // 深度 3,拒
+  assert.equal(deep3.status, 400);
+  const body = await deep3.json();
+  assert.ok(body.errors[0].message.includes('ERR_DEPTH:'));
+});
+
 test('override / extend（spec/03 钩子 2、3）与未知路径校验', async () => {
   const store = makeMockStore();
   const schema = buildGraphQLSchema(store, {
