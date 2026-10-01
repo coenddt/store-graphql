@@ -1,0 +1,82 @@
+name: release
+
+# 发布 store-graphql-node(npm)与 store-graphql-py(PyPI)。
+#
+# 触发:推 v* tag(版本必须与 node/package.json、py/pyproject.toml 一致),或手动 dispatch(仅校验)。
+# 凭证:
+#   - npm:NPM_TOKEN secret(仓库 Settings → Secrets → Actions;只此一处,禁入仓库/文档)
+#   - PyPI:Trusted Publishing(OIDC,无需 token)——需在 pypi.org 的 store-graphql-py
+#     项目上配置 publisher:owner=coenddt,repo=store-graphql,workflow=release.yml
+# go 端(module store-graphql-go)发布 = 打 `go/v*` tag 推送,Go proxy 自动拉取,无需本 workflow。
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm:
+    name: npm publish (store-graphql-node)
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance(OIDC)
+    defaults:
+      run:
+        working-directory: node
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+      - name: Check tag matches package version
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          TAG=${GITHUB_REF_NAME#v}
+          if [ "$PKG" != "$TAG" ]; then
+            echo "tag $GITHUB_REF_NAME 与 package.json version $PKG 不一致" >&2
+            exit 1
+          fi
+      - name: Install & test
+        run: npm install --no-fund --no-audit && npm test
+      - name: Pack & inspect
+        run: npm pack --dry-run
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  pypi:
+    name: PyPI publish (store-graphql-py)
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # PyPI Trusted Publishing(OIDC)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check tag matches package version
+        run: |
+          PKG=$(python -c "import tomllib; print(tomllib.load(open('py/pyproject.toml','rb'))['project']['version'])")
+          TAG=${GITHUB_REF_NAME#v}
+          if [ "$PKG" != "$TAG" ]; then
+            echo "tag $GITHUB_REF_NAME 与 pyproject version $PKG 不一致" >&2
+            exit 1
+          fi
+      - name: Build
+        run: pip install build && python -m build py
+      - name: Twine check
+        run: pip install twine && twine check dist/*
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: py/dist

@@ -1,0 +1,63 @@
+name: ci
+
+# 三端测试门禁:node(vitest 风格 node:test)/ python(pytest)/ go(go test)。
+#
+# 说明:
+# - node 端真实库 e2e(test/e2e.real.test.js)在 CI 无相邻 nodejs-store ⇒ 显式 skip(设计如此);
+# - py 端同(importorskip);go 端 FFI dll 缺 ⇒ t.Skip;
+# - go.mod 的 replace 指向相邻 go-store,CI 中浅克隆到相对位置再跑。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    name: node tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install
+        working-directory: node
+        run: npm install --no-fund --no-audit
+      - name: Test
+        working-directory: node
+        run: npm test
+
+  py:
+    name: python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install
+        working-directory: py
+        run: pip install -e ".[dev]"
+      - name: Test
+        working-directory: py
+        run: python -m pytest -q
+
+  go:
+    name: go tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      # go.mod 的 replace 指向 ../../go-store(相对 go/),CI 单仓库无此目录 ⇒ 克隆到相对位置
+      - name: Clone go-store (for replace)
+        run: git clone --depth 1 https://github.com/coenddt/go-store.git ../go-store
+      - name: Test
+        working-directory: go
+        run: go test ./...
