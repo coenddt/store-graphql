@@ -27,6 +27,35 @@ K_BOOLEAN = "boolean"
 
 ARCHIVE_SUFFIX = "Deleted"
 
+# spec/05：GraphiQL 文档页（CDN 版，GET /graphql 返回；POST 才执行查询）
+GRAPHIQL_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <title>store-graphql GraphiQL</title>
+  <link rel="stylesheet" href="https://unpkg.com/graphiql/graphiql.min.css" />
+  <style>body { margin: 0; } #graphiql { height: 100vh; }</style>
+</head>
+<body>
+  <div id="graphiql">Loading GraphiQL...</div>
+  <script crossorigin src="https://unpkg.com/react/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/graphiql/graphiql.min.js"></script>
+  <script>
+    function graphQLFetcher(graphQLParams) {
+      return fetch('/graphql', {
+        method: 'post',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(graphQLParams),
+      }).then(function (r) { return r.json(); });
+    }
+    ReactDOM.createRoot(document.getElementById('graphiql')).render(
+      React.createElement(GraphiQL, { fetcher: graphQLFetcher })
+    );
+  </script>
+</body>
+</html>
+"""
+
 # ── spec/01：归档表过滤（与 store-api 三端逐字一致）──
 
 
@@ -69,6 +98,7 @@ def _out_type(field_defn, type_name):
     if field_defn.get("type") == "object" and "fields" in field_defn:
         return GraphQLObjectType(
             name=type_name,
+            description=field_defn.get("description"),  # spec/05：description 透传不改写
             fields=lambda: _map_fields(field_defn["fields"], type_name),
         )
     return _scalar_for(field_defn.get("type")) or GraphQLJSON
@@ -77,7 +107,8 @@ def _out_type(field_defn, type_name):
 def _map_fields(fields, type_name):
     return {
         k: GraphQLField(
-            GraphQLNonNull(GraphQLID) if k == "_id" else _out_type(v, f"{type_name}_{k}")
+            GraphQLNonNull(GraphQLID) if k == "_id" else _out_type(v, f"{type_name}_{k}"),
+            description=v.get("description"),  # spec/05：含 computes 与嵌套字段
         )
         for k, v in (fields or {}).items()
     }
@@ -243,8 +274,10 @@ def build_graphql_schema(
         if xg.get("hidden"):  # spec/03 钩子 1：模型级 hidden
             continue
         model_type = GraphQLObjectType(
+            name=name,
+            description=defn.get("description"),  # spec/05
             # n=name 显式捕获:延迟 thunk 求值时循环变量已到末值,会造成嵌套类型重名
-            name=name, fields=lambda d=defn, n=name: _map_fields(_model_fields(d), n)
+            fields=lambda d=defn, n=name: _map_fields(_model_fields(d), n),
         )
 
         query_fields[f"get_{name}"] = GraphQLField(
@@ -332,7 +365,7 @@ def create_app(
 ):
     try:
         from fastapi import FastAPI, Request
-        from fastapi.responses import JSONResponse
+        from fastapi.responses import HTMLResponse, JSONResponse
     except ImportError as e:  # noqa: F841 — 报错信息自身已含原因
         raise ImportError(
             "create_app 需要安装 fastapi：pip install 'store-graphql-py[fastapi]'；"
@@ -349,6 +382,11 @@ def create_app(
     )
     if permission_error is None:
         permission_error = getattr(store, "PermissionError", None)
+
+    @app.get("/graphql")
+    async def graphiql_page():
+        # spec/05：GET 返回 GraphiQL 文档页（执行走 POST；GET 查询执行列 v1）
+        return HTMLResponse(GRAPHIQL_HTML)
 
     @app.post("/graphql")
     async def graphql_endpoint(request: Request):

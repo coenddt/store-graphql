@@ -12,11 +12,16 @@ from store_graphql import build_graphql_schema, export_sdl, filter_archived
 
 DEFN = {
     "name": "User",
+    "description": "用户表：平台账号主档",
     "fields": {
-        "_id": {"type": "string"},
+        "_id": {"type": "string", "description": "主键，u 前缀"},
         "name": {"type": "string"},
         "age": {"type": "int"},
-        "profile": {"type": "object", "fields": {"bio": {"type": "string"}}},
+        "profile": {
+            "type": "object",
+            "description": "个人资料",
+            "fields": {"bio": {"type": "string"}},
+        },
     },
 }
 
@@ -76,6 +81,10 @@ def test_sdl_generation():
     assert "list_User(condition: JSON, sort: JSON, limit: Int): [User!]!" in sdl
     assert "create_User(input: JSON!): User" in sdl
     assert "profile: User_profile" in sdl
+    # description 管道（spec/05）：模型/字段/嵌套类型三层透传
+    assert '"""用户表：平台账号主档"""' in sdl
+    assert '"""主键，u 前缀"""' in sdl
+    assert '"""个人资料"""' in sdl
     assert "SecretLog" not in sdl
 
 
@@ -159,6 +168,19 @@ def test_annotations_hidden_readonly():
     assert "SecretLog" not in sdl
     assert "get_AuditEvent" in sdl
     assert "create_AuditEvent" not in sdl
+
+
+def test_graphiql_page():
+    # spec/05：GET /graphql 返回 GraphiQL 文档页
+    from fastapi.testclient import TestClient
+
+    from store_graphql import create_app
+
+    client = TestClient(create_app(MockStore()))
+    resp = client.get("/graphql")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    assert "graphiql" in resp.text.lower()
 
 
 def test_override_and_extend():

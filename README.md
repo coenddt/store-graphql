@@ -19,3 +19,9 @@ Design rule: **GraphQL is just another HTTP skin over GQL** — the adapters inv
 4. **Escape hatch** — `exportSDL()` → edit → reload schema-first; the generator output is a starting point, not a cage
 
 See [spec/03-customization.md](./spec/03-customization.md).
+
+## Documentation system (spec/05, three layers)
+
+1. **description pipeline** — `description` keys on the defn (model & field level, JSON-Schema style) flow verbatim into SDL; carried by introspection / GraphiQL / codegen
+2. **Interactive explorer** — Yoga ships GraphiQL on Node; py / go serve a GraphiQL page on `GET /graphql` (queries execute via `POST`)
+3. **Static docs** — `exportSDL()` is the single exit; feed SpectaQL or graphql-markdown, no doc-site generator in the adapters

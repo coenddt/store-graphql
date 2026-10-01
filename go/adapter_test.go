@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -22,7 +24,8 @@ const introspectionQuery = `query {
     types {
       name
       kind
-      fields { name }
+      description
+      fields { name description }
     }
   }
 }`
@@ -37,10 +40,12 @@ func sprintIntrospection(t *testing.T, res *graphql.Result) string {
 	var parsed struct {
 		Schema struct {
 			Types []struct {
-				Name   string `json:"name"`
-				Kind   string `json:"kind"`
-				Fields []struct {
-					Name string `json:"name"`
+				Name        string `json:"name"`
+				Kind        string `json:"kind"`
+				Description string `json:"description"`
+				Fields      []struct {
+					Name        string `json:"name"`
+					Description string `json:"description"`
 				} `json:"fields"`
 			} `json:"types"`
 		} `json:"__schema"`
@@ -54,10 +59,17 @@ func sprintIntrospection(t *testing.T, res *graphql.Result) string {
 			continue
 		}
 		fmt.Fprintf(&b, "type %s", typ.Name)
+		if typ.Description != "" {
+			fmt.Fprintf(&b, " \"\"\"%s\"\"\"", typ.Description)
+		}
 		if len(typ.Fields) > 0 {
 			names := make([]string, 0, len(typ.Fields))
 			for _, f := range typ.Fields {
-				names = append(names, f.Name)
+				if f.Description != "" {
+					names = append(names, fmt.Sprintf("%s(%s)", f.Name, f.Description))
+				} else {
+					names = append(names, f.Name)
+				}
 			}
 			fmt.Fprintf(&b, " { %s }", strings.Join(names, " "))
 		}
@@ -68,8 +80,9 @@ func sprintIntrospection(t *testing.T, res *graphql.Result) string {
 
 const testDefnJSON = `{
 	"name": "User",
+	"description": "用户表：平台账号主档",
 	"fields": {
-		"_id": {"type": "string"},
+		"_id": {"type": "string", "description": "主键，u 前缀"},
 		"name": {"type": "string"},
 		"age": {"type": "int"}
 	}
@@ -184,6 +197,32 @@ func TestSDLGeneration(t *testing.T) {
 		if !strings.Contains(sdl, want) {
 			t.Errorf("SDL 缺少 %q，实际:\n%s", want, sdl)
 		}
+	}
+	// description 管道（spec/05）：模型/字段两层透传（sprintIntrospection 打印格式：类型用三引号、字段用括号）
+	if !strings.Contains(sdl, `"""用户表：平台账号主档"""`) || !strings.Contains(sdl, `_id(主键，u 前缀)`) {
+		t.Errorf("SDL 缺少 description，实际:\n%s", sdl)
+	}
+}
+
+func TestGraphiQLPage(t *testing.T) {
+	// spec/05：GET /graphql 返回 GraphiQL 文档页；POST 仍走执行
+	st := newMockStore(t)
+	schema := buildTestSchema(t, st, Options{})
+	handler := Handler(schema, Options{})
+
+	rec := httptest.NewRecorder()
+	handler(rec, httptest.NewRequest(http.MethodGet, "/graphql", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("GET /graphql 应返回 200 text/html，实际 %d %s", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(strings.ToLower(rec.Body.String()), "graphiql") {
+		t.Fatalf("GET /graphql 应返回 GraphiQL 页面")
+	}
+
+	rec2 := httptest.NewRecorder()
+	handler(rec2, httptest.NewRequest(http.MethodPut, "/graphql", strings.NewReader("{}")))
+	if rec2.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("PUT 应 405，实际 %d", rec2.Code)
 	}
 }
 

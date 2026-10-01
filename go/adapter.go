@@ -103,12 +103,19 @@ func outType(fieldDefn map[string]any, typeName string) graphql.Type {
 	if t == "object" {
 		if sub, ok := fieldDefn["fields"].(map[string]any); ok {
 			return graphql.NewObject(graphql.ObjectConfig{
-				Name:   typeName,
-				Fields: fieldsMap(sub, typeName),
+				Name:        typeName,
+				Description: descOf(fieldDefn), // spec/05：description 透传不改写
+				Fields:      fieldsMap(sub, typeName),
 			})
 		}
 	}
 	return scalarFor(t)
+}
+
+// descOf spec/05：description 透传（缺失返回空串，graphql-go 视同无描述）。
+func descOf(defn map[string]any) string {
+	d, _ := defn["description"].(string)
+	return d
 }
 
 func fieldsMap(fields map[string]any, typeName string) graphql.Fields {
@@ -124,7 +131,7 @@ func fieldsMap(fields map[string]any, typeName string) graphql.Fields {
 		} else {
 			t = outType(defn, typeName+"_"+k)
 		}
-		out[k] = &graphql.Field{Type: t}
+		out[k] = &graphql.Field{Type: t, Description: descOf(defn)}
 	}
 	return out
 }
@@ -408,8 +415,9 @@ func Build(st Store, opts Options) (graphql.Schema, error) {
 		}
 		allFields := defnFieldKeys(defn)
 		modelType := graphql.NewObject(graphql.ObjectConfig{
-			Name:   name,
-			Fields: fieldsMap(modelFields(defn), name),
+			Name:        name,
+			Description: descOf(defn), // spec/05
+			Fields:      fieldsMap(modelFields(defn), name),
 		})
 
 		queryFields["get_"+name] = &graphql.Field{
@@ -500,9 +508,43 @@ func defnFieldKeys(defn map[string]any) []string {
 	return out
 }
 
-// Handler GraphQL over HTTP（spec/04）：POST application/json。
+// graphiqlHTML spec/05：GraphiQL 文档页（CDN 版，GET /graphql 返回；POST 才执行查询）。
+const graphiqlHTML = `<!doctype html>
+<html lang="en">
+<head>
+  <title>store-graphql GraphiQL</title>
+  <link rel="stylesheet" href="https://unpkg.com/graphiql/graphiql.min.css" />
+  <style>body { margin: 0; } #graphiql { height: 100vh; }</style>
+</head>
+<body>
+  <div id="graphiql">Loading GraphiQL...</div>
+  <script crossorigin src="https://unpkg.com/react/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/graphiql/graphiql.min.js"></script>
+  <script>
+    function graphQLFetcher(graphQLParams) {
+      return fetch('/graphql', {
+        method: 'post',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(graphQLParams),
+      }).then(function (r) { return r.json(); });
+    }
+    ReactDOM.createRoot(document.getElementById('graphiql')).render(
+      React.createElement(GraphiQL, { fetcher: graphQLFetcher })
+    );
+  </script>
+</body>
+</html>
+`
+
+// Handler GraphQL over HTTP（spec/04）：POST application/json；GET 返回 GraphiQL 文档页（spec/05）。
 func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(graphiqlHTML))
+			return
+		}
 		if r.Method != http.MethodPost {
 			http.Error(w, `{"errors":[{"message":"仅支持 POST（spec/04）"}]}`, http.StatusMethodNotAllowed)
 			return

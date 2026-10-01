@@ -16,11 +16,12 @@ const {
 
 const DEFN = {
   name: 'User',
+  description: '用户表：平台账号主档',
   fields: {
-    _id: { type: 'string' },
+    _id: { type: 'string', description: '主键，u 前缀' },
     name: { type: 'string' },
     age: { type: 'int' },
-    profile: { type: 'object', fields: { bio: { type: 'string' } } },
+    profile: { type: 'object', description: '个人资料', fields: { bio: { type: 'string' } } },
   },
 };
 
@@ -79,6 +80,10 @@ test('SDL 自动生成：类型映射与生成面（spec/01）', async () => {
   assert.match(sdl, /get_User\(id: ID!\): User/);
   assert.match(sdl, /list_User\(condition: JSON, sort: JSON, limit: Int\): \[User!\]!/);  assert.match(sdl, /create_User\(input: JSON!\): User/);
   assert.match(sdl, /profile: User_profile/); // 嵌套 object 下钻
+  // description 管道（spec/05）：模型/字段/嵌套类型三层透传
+  assert.match(sdl, /"""用户表：平台账号主档"""/);
+  assert.match(sdl, /"""主键，u 前缀"""/);
+  assert.match(sdl, /"""个人资料"""/);
   assert.doesNotMatch(sdl, /SecretLog/);
 });
 

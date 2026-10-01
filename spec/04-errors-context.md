@@ -28,5 +28,5 @@
 ## GraphQL over HTTP
 
 - POST `application/json`：`{ query, variables, operationName }` ⇒ `application/json` 响应
-- GET：`?query=&variables=&operationName=`（仅 query，mutation 拒绝）——node 由 Yoga 原生支持；py / go 适配层 v0 实现 POST，GET 列 v1
+- GET：返回 GraphiQL 文档页（spec/05）；GET 查询执行（`?query=&variables=`）列 v1
 - Introspection：执行器原生能力，不关闭（SDL / GraphiQL / 客户端 codegen 依赖它）

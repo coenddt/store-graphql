@@ -74,6 +74,12 @@ mux.Handle("/graphql", storegraphql.Handler(schema, storegraphql.Options{}))
 
 详见 [spec/03-customization.md](./spec/03-customization.md)。
 
+## 文档系统（spec/05，三层）
+
+1. **description 管道**：defn 的 `description` 键（模型级/字段级，JSON Schema 惯例）原样写入 SDL——introspection / GraphiQL / codegen 全链路携带，适配层透传不改写
+2. **交互式 Explorer**：node 由 Yoga 原生提供 GraphiQL；py / go 的 `GET /graphql` 返回 GraphiQL 文档页（`POST` 才执行查询）
+3. **静态文档站**：`exportSDL()` 是唯一出口，推荐 SpectaQL / graphql-markdown 消费，适配层不自造文档生成器
+
 ## v0 范围与明确不支持项
 
 - 支持：Query `get_X` / `list_X`（condition/sort/limit），Mutation `create_X` / `update_X` / `delete_X`；introspection；fragments 与 `@skip`/`@include`（node/py/go 均实现）

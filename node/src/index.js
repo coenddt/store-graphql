@@ -71,6 +71,7 @@ function outType(fieldDefn, typeName) {
   if (fieldDefn.type === 'object' && fieldDefn.fields) {
     return new GraphQLObjectType({
       name: typeName,
+      description: fieldDefn.description, // spec/05：description 透传不改写
       fields: () => mapFields(fieldDefn.fields, typeName),
     });
   }
@@ -80,7 +81,10 @@ function outType(fieldDefn, typeName) {
 function mapFields(fields, typeName) {
   const out = {};
   for (const [k, v] of Object.entries(fields || {})) {
-    out[k] = { type: k === '_id' ? new GraphQLNonNull(GraphQLID) : outType(v, `${typeName}_${k}`) };
+    out[k] = {
+      type: k === '_id' ? new GraphQLNonNull(GraphQLID) : outType(v, `${typeName}_${k}`),
+      description: v.description, // spec/05：含 computes 与嵌套字段
+    };
   }
   return out;
 }
@@ -202,6 +206,7 @@ function buildGraphQLSchema(store, opts = {}) {
     if (xg.hidden) continue; // spec/03 钩子 1：模型级 hidden
     const modelType = new GraphQLObjectType({
       name,
+      description: defn.description, // spec/05
       fields: () => mapFields(modelFields(defn), name),
     });
     queryFields[`get_${name}`] = {
