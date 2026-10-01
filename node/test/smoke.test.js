@@ -164,6 +164,31 @@ test('x-graphql 注记：hidden / readonly（spec/03 钩子 1）', async () => {
   assert.doesNotMatch(sdl, /create_AuditEvent/);
 });
 
+test('createYoga 上下文错误分类 403/401（spec/04，core ERR_PERMISSION: 前缀契约）', async () => {
+  const { createYoga } = require('../src/index');
+  const store = makeMockStore();
+  const { yoga } = createYoga(store, {
+    contextFactory: async ({ request }) => {
+      const user = request.headers.get('x-user');
+      if (user === 'bad') throw new Error('ERR_PERMISSION:无访问权限');
+      if (user === 'broken') throw new Error('上下文钩子故障');
+      return { user };
+    },
+  });
+  const mk = (u) =>
+    new Request('http://localhost/graphql', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-user': u },
+      body: JSON.stringify({ query: '{ __typename }' }),
+    });
+  const r403 = await yoga(mk('bad'));
+  assert.equal(r403.status, 403);
+  const r401 = await yoga(mk('broken'));
+  assert.equal(r401.status, 401);
+  const ok = await yoga(mk('alice'));
+  assert.equal(ok.status, 200);
+});
+
 test('override / extend（spec/03 钩子 2、3）与未知路径校验', async () => {
   const store = makeMockStore();
   const schema = buildGraphQLSchema(store, {

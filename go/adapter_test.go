@@ -204,6 +204,50 @@ func TestSDLGeneration(t *testing.T) {
 	}
 }
 
+func TestContextErrorClassification(t *testing.T) {
+	// spec/04：PermissionError（core ERR_PERMISSION: 前缀）⇒ 403；其余 ⇒ 401；1MB 体限 ⇒ 413
+	st := newMockStore(t)
+	schema := buildTestSchema(t, st, Options{})
+	handler := Handler(schema, Options{
+		ContextProvider: func(r *http.Request) (*gostore.Context, error) {
+			switch r.Header.Get("x-user") {
+			case "bad":
+				return nil, errString("ERR_PERMISSION:无访问权限")
+			case "broken":
+				return nil, errString("上下文钩子故障")
+			}
+			return nil, nil
+		},
+	})
+
+	post := func(u string, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-user", u)
+		handler(rec, req)
+		return rec
+	}
+
+	if rec := post("bad", `{"query":"{ __typename }"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("ERR_PERMISSION: 前缀应 403，实际 %d", rec.Code)
+	}
+	if rec := post("broken", `{"query":"{ __typename }"}`); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("非权限 provider 错误应 401，实际 %d", rec.Code)
+	}
+	if rec := post("alice", `{"query":"`+strings.Repeat("x", (1<<20)+10)+`"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("超 1MB 请求体应被截断拒绝（400/413），实际 %d", rec.Code)
+	}
+	if rec := post("alice", `{"query":"{ __typename }"}`); rec.Code != http.StatusOK {
+		t.Fatalf("正常请求应 200，实际 %d", rec.Code)
+	}
+}
+
+// errString 轻量 error 实现（前缀契约测试用）。
+type errString string
+
+func (e errString) Error() string { return string(e) }
+
 func TestGraphiQLPage(t *testing.T) {
 	// spec/05：GET /graphql 返回 GraphiQL 文档页；POST 仍走执行
 	st := newMockStore(t)

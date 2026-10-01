@@ -30,3 +30,21 @@
 - POST `application/json`：`{ query, variables, operationName }` ⇒ `application/json` 响应
 - GET：返回 GraphiQL 文档页（spec/05）；GET 查询执行（`?query=&variables=`）列 v1
 - Introspection：执行器原生能力，不关闭（SDL / GraphiQL / 客户端 codegen 依赖它）
+
+## 请求体上限
+
+三端统一 **1MB**（对齐 store-api 先例 `store-api/go/adapter.go` 的 `io.LimitReader(r.Body, 1<<20)`）：go `LimitReader` 截断后解码失败 ⇒ 400；py 超 ⇒ 413；node 由 Yoga 承载（Yoga 层限制能力待核实，v1 补对齐）。
+
+## 安全模型（v0 边界，如实声明）
+
+| 攻击面 | v0 状态 | 责任边界 |
+|---|---|---|
+| GQL 串注入 | 通过：全部用户输入（id/condition/sort/limit/input/set）经 params 值通道，零拼接进 GQL 串；投影字段名经 schema 校验方进入 resolver | core 的条件编译（结构/值分离）属 rust-store 安全域，待单独取证 |
+| 上下文跨请求泄漏 | 通过：py ContextVar（`permission.py:24`）、node AsyncLocalStorage（`permission.js:16`）、go 显式 actx 参数 | — |
+| 上下文错误分类 | PermissionError（core `ERR_PERMISSION:` 稳定前缀）⇒ 403；其余 ⇒ 401；禁按文案匹配 | — |
+| 查询深度/复杂度攻击 | **未设限（v1）**：深层关系子查询可放大后端负载；部署侧先以反代限流/超时兜底 | v1 接 depth/cost 限制（node 可用 plugin-query-depth，py/go 手写 AST 深度计算） |
+| 错误信息泄露（CWE-209） | spec 决策：message 原样透传（内网工具定位；自动反馈原则优先） | 对外部署在网关层做错误映射 |
+| Introspection 泄露 | 设计决策：开启（文档/codegen 依赖） | 对外部署在网关层按环境拦截 |
+| 批量查询（batching） | 关闭：三端单请求单文档 | — |
+| CSRF | GET 无副作用（仅文档页）；POST JSON 非简单请求，跨站被 CORS 预检拦截 | — |
+| 请求体大小 | 1MB 上限（本节） | node 端待核实 Yoga 层能力 |

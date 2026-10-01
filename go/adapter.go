@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -24,6 +25,9 @@ import (
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/graphql/language/ast"
 )
+
+// maxBodyBytes 请求体上限（对齐 store-api/go/adapter.go 的 1MB 先例，防大 body 撑内存）。
+const maxBodyBytes = 1 << 20
 
 const archiveSuffix = "Deleted"
 
@@ -554,7 +558,7 @@ func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 			Variables     map[string]interface{} `json:"variables"`
 			OperationName string                 `json:"operationName"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.NewDecoder(io.LimitReader(r.Body, maxBodyBytes)).Decode(&body); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"errors":[{"message":"请求体必须是 JSON"}]}`))
@@ -564,8 +568,14 @@ func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 		if opts.ContextProvider != nil {
 			actx, err := opts.ContextProvider(r)
 			if err != nil {
+				// spec/04：PermissionError ⇒ 403（RBAC 拒绝）；其余 ⇒ 401。
+				// 判定按 core 稳定前缀 ERR_PERMISSION:（ERR_PERM_PREFIX 契约，禁按文案匹配）。
+				status := http.StatusUnauthorized
+				if isPermissionError(err) {
+					status = http.StatusForbidden
+				}
 				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
+				w.WriteHeader(status)
 				_, _ = fmt.Fprintf(w, `{"errors":[{"message":%q}]}`, err.Error())
 				return
 			}
@@ -581,4 +591,9 @@ func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(result)
 	}
+}
+
+// isPermissionError 按稳定前缀判定（core ERR_PERM_PREFIX 契约，同 store-api/go/errors.go）。
+func isPermissionError(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "ERR_PERMISSION:")
 }

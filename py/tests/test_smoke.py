@@ -183,6 +183,41 @@ def test_graphiql_page():
     assert "graphiql" in resp.text.lower()
 
 
+class _PermissionError(Exception):
+    """模拟 store.PermissionError（RBAC 拒绝）。"""
+
+
+def test_security_matrix():
+    # spec/04 安全矩阵：403/401 分类、400 非 JSON、413 体限
+    from fastapi.testclient import TestClient
+
+    from store_graphql import create_app
+
+    store = MockStore()
+    store.PermissionError = _PermissionError
+
+    def provider(request):
+        user = request.headers.get("x-user")
+        if user == "bad":
+            raise _PermissionError("ERR_PERMISSION:无访问权限")
+        if user == "broken":
+            raise RuntimeError("上下文钩子故障")
+        return {"user": user}
+
+    client = TestClient(create_app(store, context_provider=provider))
+    post = lambda u, body, **kw: client.post(  # noqa: E731
+        "/graphql", content=body, headers={"x-user": u, "Content-Type": "application/json"}, **kw
+    )
+
+    assert post("bad", '{"query":"{ __typename }"}').status_code == 403
+    assert post("broken", '{"query":"{ __typename }"}').status_code == 401
+    assert post("alice", "not-json").status_code == 400
+    assert post("alice", '{"query":"' + "x" * ((1 << 20) + 10) + '"}').status_code == 413
+    ok = post("alice", '{"query":"{ __typename }"}')
+    assert ok.status_code == 200
+    assert ok.json()["data"]["__typename"] == "Query"
+
+
 def test_override_and_extend():
     store = MockStore()
 

@@ -1,8 +1,10 @@
 """adapter — py 端核心实现（语义依据 ../../spec/*.md，与 node 端镜像）。"""
 
 import inspect
+import json
 
 from graphql import (
+    graphql,
     GraphQLArgument,
     GraphQLBoolean,
     GraphQLField,
@@ -390,8 +392,17 @@ def create_app(
 
     @app.post("/graphql")
     async def graphql_endpoint(request: Request):
+        raw = await request.body()
+        # spec/04：请求体上限 1MB（对齐 store-api 三端，防大 body 撑内存）
+        if len(raw) > (1 << 20):
+            return JSONResponse(
+                status_code=413,
+                content={"errors": [{"message": "请求体超过 1MB 上限（spec/04）"}]},
+            )
         try:
-            body = await request.json()
+            body = json.loads(raw) if raw else {}
+            if not isinstance(body, dict):
+                raise ValueError("body 不是 JSON 对象")
         except Exception:  # noqa: BLE001 — 非 JSON 请求体按 400 明确反馈，不静默
             return JSONResponse(
                 status_code=400, content={"errors": [{"message": "请求体必须是 JSON"}]}

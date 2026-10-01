@@ -273,6 +273,12 @@ function exportSDL(schema) {
 }
 
 // ── spec/04：HTTP 承载（GraphQL Yoga，可选依赖）──
+
+// isPermissionError 按 core 稳定前缀判定（ERR_PERM_PREFIX 契约，同 store-api 三端，禁按文案匹配）
+function isPermissionError(e) {
+  return String((e && e.message) || e).startsWith('ERR_PERMISSION:');
+}
+
 function createYoga(store, opts = {}) {
   let yogaMod;
   try {
@@ -286,16 +292,27 @@ function createYoga(store, opts = {}) {
   const yoga = createYogaImpl({
     schema,
     logging: opts.logging != null ? opts.logging : false,
-    context: opts.contextFactory
-      ? async (initialCtx) => {
-          // spec/04：每请求注入；返回 nil 同样显式 setContext（清除语义必须落地）
-          const ctx = await opts.contextFactory(initialCtx);
-          store.setContext(ctx != null ? ctx : null);
-          return ctx;
-        }
-      : undefined,
+    // spec/04：上下文在包装层注入（Yoga 的 context factory 无法自定义 HTTP 状态码）
+    context: undefined,
   });
-  return { yoga, schema };
+  // 包装层：每请求先跑 contextFactory 并按 spec/04 分类（403/401），再进 Yoga 执行
+  const handler = async (req, serverCtx) => {
+    if (opts.contextFactory) {
+      try {
+        // spec/04：每请求注入；返回 null 同样显式 setContext（清除语义必须落地）
+        const ctx = await opts.contextFactory({ request: req, serverContext: serverCtx });
+        store.setContext(ctx != null ? ctx : null);
+      } catch (e) {
+        const status = isPermissionError(e) ? 403 : 401;
+        return new Response(
+          JSON.stringify({ errors: [{ message: String((e && e.message) || e) }] }),
+          { status, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+    return yoga(req, serverCtx);
+  };
+  return { yoga: handler, schema };
 }
 
 module.exports = {
