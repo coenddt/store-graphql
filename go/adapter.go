@@ -307,8 +307,23 @@ func makeGet(st Store, name, idField string, allFields []string) graphql.FieldRe
 	}
 }
 
+// spec/02 limit 守卫常量：core 的行数封顶仅 text2query 档生效（standard 档原样返回），
+// 适配层守上界；调整先改 spec 再三端同步。
+const (
+	listLimitDefault = 50
+	listLimitMax     = 1000
+)
+
 func makeList(st Store, name string, allFields []string) graphql.FieldResolveFn {
 	return func(p graphql.ResolveParams) (interface{}, error) {
+		// spec/02 limit 守卫：缺省 50 防全表；超上限抛错（ERR_LIMIT: 稳定前缀），不静默截断
+		limit := listLimitDefault
+		if v, ok := p.Args["limit"]; ok && v != nil {
+			limit = v.(int)
+			if limit > listLimitMax {
+				return nil, fmt.Errorf("ERR_LIMIT:list limit 上限 %d,收到 %d", listLimitMax, limit)
+			}
+		}
 		proj := projectionFrom(p, allFields)
 		parts, params := []string{}, map[string]any{}
 		if v, ok := p.Args["condition"]; ok && v != nil {
@@ -319,14 +334,9 @@ func makeList(st Store, name string, allFields []string) graphql.FieldResolveFn 
 			parts = append(parts, "$sort:@s1")
 			params["s1"] = v
 		}
-		if v, ok := p.Args["limit"]; ok && v != nil {
-			parts = append(parts, "$limit:@l")
-			params["l"] = v
-		}
-		head := name
-		if len(parts) > 0 {
-			head += "(" + strings.Join(parts, ",") + ")"
-		}
+		parts = append(parts, "$limit:@l")
+		params["l"] = limit
+		head := name + "(" + strings.Join(parts, ",") + ")"
 		return st.Query(p.Context, fmt.Sprintf("%s { %s }", head, proj), params, actxFrom(p.Context))
 	}
 }

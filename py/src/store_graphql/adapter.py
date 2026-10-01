@@ -29,6 +29,11 @@ K_BOOLEAN = "boolean"
 
 ARCHIVE_SUFFIX = "Deleted"
 
+# spec/02 limit 守卫常量:core 的行数封顶仅 text2query 档生效(standard 档原样返回),
+# 适配层守上界;调整先改 spec 再三端同步。
+LIST_LIMIT_DEFAULT = 50
+LIST_LIMIT_MAX = 1000
+
 # spec/05：GraphiQL 文档页（CDN 版，GET /graphql 返回；POST 才执行查询）
 GRAPHIQL_HTML = """<!doctype html>
 <html lang="en">
@@ -199,6 +204,11 @@ def _make_get(store, name, id_field):
 
 def _make_list(store, name):
     async def resolve(_src, info, *, condition=None, sort=None, limit=None):
+        # spec/02 limit 守卫:缺省 50 防全表;超上限抛错(ERR_LIMIT: 稳定前缀),不静默截断
+        if limit is None:
+            limit = LIST_LIMIT_DEFAULT
+        if limit > LIST_LIMIT_MAX:
+            raise ValueError(f"ERR_LIMIT:list limit 上限 {LIST_LIMIT_MAX},收到 {limit}")
         projection = projection_from_info(info)
         head = name
         parts, params = [], {}
@@ -208,11 +218,9 @@ def _make_list(store, name):
         if sort is not None:
             parts.append("$sort:@s1")
             params["s1"] = sort
-        if limit is not None:
-            parts.append("$limit:@l")
-            params["l"] = limit
-        if parts:
-            head += f"({','.join(parts)})"
+        parts.append("$limit:@l")
+        params["l"] = limit
+        head += f"({','.join(parts)})"
         return await store.query(f"{head} {{ {projection} }}", params)
 
     return resolve

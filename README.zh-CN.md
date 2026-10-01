@@ -82,7 +82,7 @@ mux.Handle("/graphql", storegraphql.Handler(schema, storegraphql.Options{}))
 
 ## v0 范围与明确不支持项
 
-- 支持：Query `get_X` / `list_X`（condition/sort/limit），Mutation `create_X` / `update_X` / `delete_X`；introspection；fragments 与 `@skip`/`@include`（node/py/go 均实现）
+- 支持：Query `get_X` / `list_X`（condition/sort/limit，**limit 缺省 50、上限 1000、超限抛 `ERR_LIMIT:` 错误**——core 的行数封顶仅 text2query 档生效，适配层守上界，见 spec/02），Mutation `create_X` / `update_X` / `delete_X`；introspection；fragments 与 `@skip`/`@include`（node/py/go 均实现）
 - 不支持：subscription（store 无订阅语义）；输出别名（alias）、偏移分页（`$skip`）、`count_X` 聚合根——待 core 语义核实后 v1 收编（见 spec/01、spec/02 的「待核实」）
 - go 端 v0 差异：`JSON` 标量的内联字面量以非空校验拦截（graphql-go 的 ParseLiteral 无 error 通道），见 spec/02
 

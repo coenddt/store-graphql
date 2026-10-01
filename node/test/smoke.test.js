@@ -149,7 +149,32 @@ test('@skip/@include 与 fragment（spec/02 序列化规则）', async () => {
     fragment U on User { name }`,
     { noAge: true }
   );
-  assert.equal(store.gqlLog.at(-1).gql, 'User { name, name }'); // skip 生效；fragment 展开后 name 重复由 core 侧投影去重容忍
+  assert.equal(store.gqlLog.at(-1).gql, 'User($limit:@l) { name, name }'); // skip 生效+缺省 limit(spec/02);fragment 展开后 name 重复由 core 侧投影去重容忍
+});
+
+test('limit 守卫：缺省 50 / 超限 ERR_LIMIT: / 边界 1000（spec/02）', async () => {
+  const store = makeMockStore();
+  const schema = buildGraphQLSchema(store);
+  await run(schema, 'mutation($input: JSON!) { create_User(input: $input) { _id } }', { input: { name: 'd' } });
+
+  // 缺省 → 恒拼接 $limit:@l 且 params.l = 50
+  await run(schema, '{ list_User { _id } }');
+  let last = store.gqlLog.at(-1);
+  assert.equal(last.gql, 'User($limit:@l) { _id }');
+  assert.equal(last.params.l, 50);
+
+  // 边界 1000 → 通过
+  await run(schema, 'query($l: Int) { list_User(limit: $l) { _id } }', { l: 1000 });
+  assert.equal(store.gqlLog.at(-1).params.l, 1000);
+
+  // 超限 → resolver 抛错进 errors 数组（ERR_LIMIT: 稳定前缀），不静默截断
+  const result = await execute({
+    schema,
+    document: parse('query($l: Int) { list_User(limit: $l) { _id } }'),
+    variableValues: { l: 1001 },
+  });
+  assert.ok(result.errors && result.errors[0].message.includes('ERR_LIMIT:'), '超限应带 ERR_LIMIT: 前缀');
+  assert.equal(result.data, null); // list_User 非空 ⇒ 错误冒泡至根,data 整体为 null
 });
 
 test('x-graphql 注记：hidden / readonly（spec/03 钩子 1）', async () => {

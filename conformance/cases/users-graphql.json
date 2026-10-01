@@ -26,6 +26,25 @@
     },
     {
       "op": "query",
+      "query": "{ list_User { _id } }",
+      "variables": {},
+      "expect": {
+        "gql": "User($limit:@l) { _id }",
+        "paramsLimit": 50,
+        "_comment": "spec/02 limit 守卫:缺省补 50"
+      }
+    },
+    {
+      "op": "query",
+      "query": "query($l: Int) { list_User(limit: $l) { _id } }",
+      "variables": { "l": 1001 },
+      "expect": {
+        "errorCodePrefix": "ERR_LIMIT:",
+        "_comment": "spec/02 limit 守卫:超上限抛错,不静默截断"
+      }
+    },
+    {
+      "op": "query",
       "query": "{ get_User(id: \"u1\") { name } }",
       "variables": {},
       "expect": { "dataKeys": ["get_User"] }

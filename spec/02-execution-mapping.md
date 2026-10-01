@@ -11,8 +11,15 @@
 | `limit` | `$limit:@l` | `l` | 非 null 才拼 |
 
 - `get_X(id)` ⇒ `X($condition:@c0){<投影>}`，`c0 = {"_id": id}`，取结果首条，空则 `null`
-- `list_X(...)` ⇒ 按上表按需拼接参数头 + `{<投影>}`
+- `list_X(...)` ⇒ 按上表按需拼接参数头 + `{<投影>}`（`limit` 恒拼接，见下节守卫）
 - 主键字段名 `id_field` v0 固定 `_id`（与 store-api spec/01 一致；不改参数面）
+
+## limit 守卫（适配层语义，2026-10 性能核实后新增）
+
+- 依据：core 的行数封顶（`clamp_t2q_limit` / `force_t2q_limit`）**仅 text2query 档生效，`standard` 档原样返回**（`core/src/pipeline/util.rs:62-83`）——GraphQL 端走默认档，`limit` 不守卫即全量拉取
+- 三端 resolver 守卫：**缺省补 `limit: 50`**（防忘传全表，恒拼接 `$limit:@l`）；**显式 `limit > 1000` ⇒ resolver 抛错**，错误信息带稳定前缀 `ERR_LIMIT:`（对齐 core `ERR_PERMISSION:` 的前缀契约风格，客户端可判定；遵循「允许被拦截、禁止静默失守」，不静默截断）
+- `limit ≤ 0` 与非整数：原样传 core，语义归 core（适配层不发明；待核实 v1）
+- 数值（缺省 50 / 上限 1000）为适配层常量，调整先改本 spec 再三端同步
 
 ## Mutation 语义
 

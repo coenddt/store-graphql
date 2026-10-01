@@ -14,7 +14,7 @@
 }
 ```
 
-`expect` 支持键：`dataKeys`（data 中必须出现的键）、`gql`（投影下推后应生成的 GQL 串，末步对齐，用于锁定 spec/02 映射）。JSON 一律经 variables 传入（spec/01：JSON 标量不接受内联字面量，三端一致）。
+`expect` 支持键：`dataKeys`（data 中必须出现的键）、`gql`（投影下推后应生成的 GQL 串，末步对齐，用于锁定 spec/02 映射）、`paramsLimit`（params.l 期望值，锁定 limit 守卫缺省语义）、`errorCodePrefix`（errors 首条 message 的稳定前缀，锁定守卫错误契约）。JSON 一律经 variables 传入（spec/01：JSON 标量不接受内联字面量，三端一致）。
 
 ## 现状
 
@@ -23,4 +23,4 @@
 
 ## 用例清单
 
-- `users-graphql.json`：CRUD 全链路 + 投影下推断言 + 注记（hidden/readonly）+ override/extend
+- `users-graphql.json`：CRUD 全链路 + 投影下推断言 + limit 守卫（缺省 50 / 超限 `ERR_LIMIT:`）+ 注记（hidden/readonly）+ override/extend

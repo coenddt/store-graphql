@@ -155,7 +155,26 @@ def test_skip_and_fragment():
             {"noAge": True},
         )
     )
-    assert store.gql_log[-1]["gql"] == "User { name, name }"
+    assert store.gql_log[-1]["gql"] == "User($limit:@l) { name, name }"
+
+
+def test_limit_guard():
+    # spec/02:缺省 50 / 超限 ERR_LIMIT: / 边界 1000
+    store = MockStore()
+    schema = build_graphql_schema(store)
+    asyncio.run(run(schema, "{ list_User { _id } }"))
+    last = store.gql_log[-1]
+    assert last["gql"] == "User($limit:@l) { _id }"
+    assert last["params"]["l"] == 50
+
+    asyncio.run(run(schema, "query($l: Int) { list_User(limit: $l) { _id } }", {"l": 1000}))
+    assert store.gql_log[-1]["params"]["l"] == 1000
+
+    result = asyncio.run(
+        graphql(schema, "query($l: Int) { list_User(limit: $l) { _id } }", variable_values={"l": 1001})
+    )
+    assert result.errors and "ERR_LIMIT:" in result.errors[0].message
+    assert result.data is None  # list_User 非空 ⇒ 错误冒泡至根,data 整体为 None
 
 
 def test_annotations_hidden_readonly():

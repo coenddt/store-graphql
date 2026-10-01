@@ -137,6 +137,12 @@ function projectionFromResolveInfo(info) {
 }
 
 // ── spec/02：根 resolver（投影下推，无 N+1）──
+
+// spec/02 limit 守卫常量：core 的行数封顶仅 text2query 档生效（standard 档原样返回），
+// 适配层守上界；调整先改 spec 再三端同步。
+const LIST_LIMIT_DEFAULT = 50;
+const LIST_LIMIT_MAX = 1000;
+
 function makeGet(store, name, idField) {
   return async (_src, args, _ctx, info) => {
     const projection = projectionFromResolveInfo(info);
@@ -149,14 +155,20 @@ function makeGet(store, name, idField) {
 
 function makeList(store, name) {
   return async (_src, args, _ctx, info) => {
+    // spec/02 limit 守卫：缺省 50 防全表；超上限抛错（ERR_LIMIT: 稳定前缀），不静默截断
+    const limit = args.limit != null ? args.limit : LIST_LIMIT_DEFAULT;
+    if (limit > LIST_LIMIT_MAX) {
+      throw new Error(`ERR_LIMIT:list limit 上限 ${LIST_LIMIT_MAX},收到 ${limit}`);
+    }
     const projection = projectionFromResolveInfo(info);
     let head = name;
     const parts = [];
     const params = {};
     if (args.condition != null) { parts.push('$condition:@c0'); params.c0 = args.condition; }
     if (args.sort != null) { parts.push('$sort:@s1'); params.s1 = args.sort; }
-    if (args.limit != null) { parts.push('$limit:@l'); params.l = args.limit; }
-    if (parts.length) head += `(${parts.join(',')})`;
+    parts.push('$limit:@l');
+    params.l = limit;
+    head += `(${parts.join(',')})`;
     return store.query(`${head} { ${projection} }`, params);
   };
 }

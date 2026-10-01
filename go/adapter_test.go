@@ -243,6 +243,35 @@ func TestContextErrorClassification(t *testing.T) {
 	}
 }
 
+func TestLimitGuard(t *testing.T) {
+	// spec/02：缺省 50 / 超限 ERR_LIMIT: / 边界 1000
+	st := newMockStore(t)
+	schema := buildTestSchema(t, st, Options{})
+
+	do(t, schema, `{ list_User { _id } }`, nil)
+	last := st.gqlLog[len(st.gqlLog)-1]
+	if last != "User($limit:@l) { _id }" {
+		t.Fatalf("缺省应恒拼 $limit:@l:\n got: %s", last)
+	}
+	// params.l = 50 经 do 的 res 断言不可见,直接再查一次带显式变量确认守卫放行路径
+	res := graphql.Do(graphql.Params{Schema: schema, Context: context.Background(),
+		RequestString: `query($l: Int){ list_User(limit: $l){ _id } }`,
+		VariableValues: map[string]interface{}{"l": 1000}})
+	if res.HasErrors() {
+		t.Fatalf("边界 1000 应通过: %v", res.Errors)
+	}
+	if last := st.gqlLog[len(st.gqlLog)-1]; last != "User($limit:@l) { _id }" {
+		t.Fatalf("显式 limit 应恒拼 $limit:@l:\n got: %s", last)
+	}
+
+	over := graphql.Do(graphql.Params{Schema: schema, Context: context.Background(),
+		RequestString: `query($l: Int){ list_User(limit: $l){ _id } }`,
+		VariableValues: map[string]interface{}{"l": 1001}})
+	if !over.HasErrors() || !strings.Contains(over.Errors[0].Error(), "ERR_LIMIT:") {
+		t.Fatalf("超限应带 ERR_LIMIT: 前缀: %v", over.Errors)
+	}
+}
+
 // errString 轻量 error 实现（前缀契约测试用）。
 type errString string
 
