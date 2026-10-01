@@ -413,8 +413,10 @@ function createYoga(store, opts = {}) {
         },
       },
     ],
-    // spec/04：上下文在包装层注入（Yoga 的 context factory 无法自定义 HTTP 状态码）
+    // spec/04：context 在包装层注入（Yoga 的 context factory 无法自定义 HTTP 状态码）
     context: undefined,
+    // 承载端点（Yoga 原生选项 graphqlEndpoint；缺省 /graphql。store-gateway 组合时透传自定义路径）
+    ...(opts.endpoint ? { graphqlEndpoint: opts.endpoint } : {}),
   });
   // 包装层：每请求先跑 contextFactory 并按 spec/04 分类（403/401），再进 Yoga 执行
   const handler = async (req, serverCtx) => {

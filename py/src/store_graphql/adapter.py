@@ -448,6 +448,7 @@ def create_app(
     store,
     *,
     schema=None,
+    path="/graphql",
     context_provider=None,
     permission_error=None,
     resources=None,
@@ -478,12 +479,12 @@ def create_app(
     if permission_error is None:
         permission_error = getattr(store, "PermissionError", None)
 
-    @app.get("/graphql")
+    @app.get(path)
     async def graphiql_page():
         # spec/05：GET 返回 GraphiQL 文档页（执行走 POST；GET 查询执行列 v1）
         return HTMLResponse(GRAPHIQL_HTML)
 
-    @app.post("/graphql")
+    @app.post(path)
     async def graphql_endpoint(request: Request):
         raw = await request.body()
         # spec/04：请求体上限 1MB（对齐 store-api 三端，防大 body 撑内存）
