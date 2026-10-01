@@ -49,7 +49,9 @@ jobs:
 
   go:
     name: go tests
-    runs-on: ubuntu-latest
+    # go-store 的 FFI 加载是 Windows 专属(load_windows.go),Linux 编译不过;
+    # Windows runner 上 dll 缺失时运行时显式 skip(设计如此)
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
