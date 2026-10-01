@@ -1,0 +1,23 @@
+[project]
+name = "store-graphql-py"
+version = "0.1.0"
+description = "GraphQL adapter that auto-generates standard GraphQL APIs for py-store schemas (schema-driven CRUD over GQL, projection pushdown)"
+readme = "../README.zh-CN.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["py-store", "storepy", "graphql", "crud", "gql"]
+dependencies = ["graphql-core>=3.2"]
+
+[project.optional-dependencies]
+fastapi = ["fastapi>=0.110"]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

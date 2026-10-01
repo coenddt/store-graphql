@@ -1,0 +1,46 @@
+{
+  "name": "users-graphql",
+  "schema": {
+    "name": "User",
+    "fields": {
+      "_id": { "type": "string" },
+      "name": { "type": "string" },
+      "age": { "type": "int" }
+    }
+  },
+  "steps": [
+    {
+      "op": "mutation",
+      "query": "mutation($input: JSON!) { create_User(input: $input) { _id name age } }",
+      "variables": { "input": { "name": "a", "age": 1 } },
+      "expect": { "dataKeys": ["create_User"] }
+    },
+    {
+      "op": "query",
+      "query": "query($c: JSON, $l: Int) { list_User(condition: $c, limit: $l) { name } }",
+      "variables": { "c": { "name": "a" }, "l": 10 },
+      "expect": {
+        "dataKeys": ["list_User"],
+        "gql": "User($condition:@c0,$limit:@l) { name }"
+      }
+    },
+    {
+      "op": "query",
+      "query": "{ get_User(id: \"u1\") { name } }",
+      "variables": {},
+      "expect": { "dataKeys": ["get_User"] }
+    },
+    {
+      "op": "mutation",
+      "query": "mutation($id: ID!, $set: JSON!) { update_User(id: $id, set: $set) { name age } }",
+      "variables": { "id": "u1", "set": { "age": 2 } },
+      "expect": { "dataKeys": ["update_User"] }
+    },
+    {
+      "op": "mutation",
+      "query": "mutation { delete_User(id: \"u1\") }",
+      "variables": {},
+      "expect": { "dataKeys": ["delete_User"] }
+    }
+  ]
+}
