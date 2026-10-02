@@ -18,7 +18,7 @@
 
 | 端 | 钩子 | 注入 |
 |---|---|---|
-| node | `opts.contextFactory(initialCtx)` | `store.setContext(ctx)`（出处 `nodejs-store/src/index.js:287`） |
+| node | `opts.contextFactory({ request, serverContext })` | `store.setContext(ctx)`（出处 `nodejs-store/src/index.js:306`） |
 | py | `context_provider(request)`（支持 async） | 中间件 `store.set_context(ctx)`（出处 `store-api-py/app.py:80`） |
 | go | `opts.ContextProvider(req)` | `context.WithValue` 携带 `*gostore.Context` → resolver 经 `p.Context` 取用 |
 
