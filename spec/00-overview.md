@@ -14,7 +14,7 @@
 
 | 端 | 目录 | 包名 | schema 构建 | HTTP 承载 | 执行器 |
 |---|---|---|---|---|---|
-| Node | `node/` | `store-graphql-node`（npm） | graphql-js 程序化 `GraphQLSchema` | GraphQL Yoga（可挂任意框架或独立跑） | graphql-js `execute`（Yoga 内置） |
+| Node | `node/` | `store-graphql-node`（npm） | graphql-js 程序化 `GraphQLSchema` | `graphqlPlugin`（Fastify 插件，缺省 `/graphql`；`path` 可配）/ `createYoga`（fetch handler，可挂任意框架或独立跑） | graphql-js `execute`（Yoga 内置） |
 | Python | `py/` | `store-graphql-py`（PyPI） | graphql-core 程序化 `GraphQLSchema` | FastAPI 单路由（可选，缺省仅产 schema） | graphql-core `graphql()`（async） |
 | Go | `go/` | `store-graphql-go`（module `github.com/coenddt/store-graphql-go`） | graphql-go/graphql 程序化 `graphql.Schema` | 标准库 `net/http` | graphql-go `graphql.Do` |
 

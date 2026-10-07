@@ -31,6 +31,24 @@
 - GET：返回 GraphiQL 文档页（spec/05）；GET 查询执行（`?query=&variables=`）列 v1
 - Introspection：执行器原生能力，不关闭（SDL / GraphiQL / 客户端 codegen 依赖它）
 
+## 错误呈现（node：Yoga 掩码默认）
+
+- **默认原样透出 message**（与 py / go 一致，符合本 spec 首节「原样透传，不吞不改写」）——node 经 Yoga `maskedErrors.maskError` 实现；py/go 执行器本就原样透出，故本项为三端 parity
+- **权限类错误**（core 稳定前缀 `ERR_PERMISSION:`）⇒ HTTP **403** + `extensions.code = 'FORBIDDEN'`；message **原样保留前缀**（前缀剥离属展示层选择，禁写死进适配层）
+- 覆盖口子：`maskError` 单独覆盖掩码函数；`maskedErrors` 直通 Yoga（对外部署可传 Yoga 默认掩码或自定策略，见 [DEPLOYMENT.md](../DEPLOYMENT.md)）
+
+## HTTP 承载封装
+
+| 端 | 封装 | 缺省端点 | 说明 |
+|---|---|---|---|
+| node | `graphqlPlugin(fastify, { store, path, ...createYoga opts })` | `/graphql` | Fastify 插件；宿主与 store-gateway 的统一入口 |
+| node | `createYoga(store, opts)` → `{ yoga, schema }` | Yoga 自身缺省 | fetch handler，供非 Fastify 框架或独立跑 |
+| py | `create_app(store, **opts)` | `/graphql` | FastAPI 应用（可选依赖） |
+| go | `Handler(schema, opts)` | `opts.Path` | 标准库 `net/http` |
+
+- 桥接契约（node）：每请求构造 Web `Request` → 调用 `yoga` → 回拷 status / headers / body 到 Fastify reply
+- **响应头回拷必须剔除** `content-length` / `content-encoding` / `transfer-encoding`——body 经 `res.text()` 已解码，回拷原值会与实际字节不符；`set-cookie` 须经 `getSetCookie()` 逐条 append（iterator 给的是合并串）
+
 ## 请求体上限
 
 三端统一 **1MB**（对齐 store-api 先例 `store-api/go/adapter.go` 的 `io.LimitReader(r.Body, 1<<20)`）：go `LimitReader` 截断后解码失败 ⇒ 400；py 超 ⇒ 413；node 经 Yoga `maxRequestBodySize: 1MB`（Yoga 默认 25MB，显式收窄；出处 `graphql-yoga/esm/server.js:171`）⇒ 413 `REQUEST_ENTITY_TOO_LARGE`。
