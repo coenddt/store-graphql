@@ -371,6 +371,23 @@ function isPermissionError(e) {
   return String((e && e.message) || e).startsWith('ERR_PERMISSION:');
 }
 
+// spec/04：错误呈现默认——非权限错误原样透出（parity py/go，符合本 spec「原样透传」）；
+// 权限类错误附加 HTTP 403 + code FORBIDDEN，message 原样（剥前缀属展示层，走 opts.maskError）
+function defaultMaskError(error, message, isDev) {
+  const orig = (error && error.originalError) || error;
+  if (!isPermissionError(error) && !isPermissionError(orig)) return error;
+  return new GraphQLError(String((error && error.message) || ''), {
+    nodes: error && error.nodes,
+    path: error && error.path,
+    originalError: orig,
+    extensions: {
+      ...((error && error.extensions) || {}),
+      code: 'FORBIDDEN',
+      http: { status: 403 },
+    },
+  });
+}
+
 function createYoga(store, opts = {}) {
   let yogaMod;
   try {
@@ -389,6 +406,11 @@ function createYoga(store, opts = {}) {
     logging: opts.logging != null ? opts.logging : false,
     // spec/04：请求体上限 1MB(Yoga 默认 25MB,显式收窄对齐 store-api 三端)
     maxRequestBodySize: 1 << 20,
+    // spec/04：默认自定义掩码（原样透出 + 权限错误 403）；maskedErrors 直通 Yoga，maskError 单独覆盖
+    // （Yoga v5 只认对象形态，传裸函数会被静默忽略退回默认掩码）
+    maskedErrors: opts.maskedErrors !== undefined
+      ? opts.maskedErrors
+      : { maskError: opts.maskError || defaultMaskError },
     // spec/04:深度/复杂度/introspection 守卫(onExecute 期拦截,extensions.http.status 定 400)
     plugins: [
       {
@@ -422,8 +444,10 @@ function createYoga(store, opts = {}) {
   const handler = async (req, serverCtx) => {
     if (opts.contextFactory) {
       try {
-        // spec/04：每请求注入；返回 null 同样显式 setContext（清除语义必须落地）
-        const ctx = await opts.contextFactory({ request: req, serverContext: serverCtx });
+        // spec/04：每请求注入；同步 contextFactory 走快路径——不引入 await 微任务，
+        // 避免 AsyncLocalStorage.enterWith 在微任务里落地致上下文传不到 resolver（返回 null 同样显式落地清除）
+        const maybe = opts.contextFactory({ request: req, serverContext: serverCtx });
+        const ctx = maybe && typeof maybe.then === 'function' ? await maybe : maybe;
         store.setContext(ctx != null ? ctx : null);
       } catch (e) {
         const status = isPermissionError(e) ? 403 : 401;
@@ -438,12 +462,45 @@ function createYoga(store, opts = {}) {
   return { yoga: handler, schema };
 }
 
+// ── spec/04：HTTP 承载（Fastify 插件；宿主与 store-gateway 的统一入口）──
+// 默认 path '/graphql'；opts 透传 createYoga（contextFactory / 守卫阈值 / maskError / schema / resources / idField ...）
+// 回拷响应头剔除长度/编码类：body 已经 res.text() 解码，原 content-length / content-encoding 与实际不符
+const SKIP_RES_HEADERS = new Set(['content-length', 'content-encoding', 'transfer-encoding']);
+
+async function graphqlPlugin(fastify, opts = {}) {
+  const { store, path: gqlPath = '/graphql', ...yogaOpts } = opts;
+  if (!store) throw new Error('ERR_NO_STORE:graphqlPlugin 需要 store（spec/00 store 端口契约）');
+  const { yoga } = createYoga(store, { endpoint: gqlPath, ...yogaOpts });
+  fastify.route({
+    method: ['GET', 'POST'],
+    url: gqlPath,
+    handler: async (req, reply) => {
+      const url = `http://${req.headers.host || 'localhost'}${req.raw.url}`;
+      const init = { method: req.method, headers: req.headers };
+      if (req.method !== 'GET' && req.method !== 'HEAD') init.body = JSON.stringify(req.body ?? {});
+      const res = await yoga(new Request(url, init));
+      reply.code(res.status);
+      for (const [k, v] of res.headers) {
+        const key = k.toLowerCase();
+        if (SKIP_RES_HEADERS.has(key) || key === 'set-cookie') continue;
+        reply.header(k, v);
+      }
+      // set-cookie 多值须逐条 append（iterator 返回合并串，Cookie 的 Expires 含逗号会被解析坏）
+      for (const c of (res.headers.getSetCookie ? res.headers.getSetCookie() : [])) {
+        reply.header('set-cookie', c);
+      }
+      return reply.send(await res.text());
+    },
+  });
+}
+
 module.exports = {
   filterArchived,
   GraphQLJSON,
   buildGraphQLSchema,
   exportSDL,
   createYoga,
+  graphqlPlugin,
   queryDepthOf,
   queryFieldCount,
 };

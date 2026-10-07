@@ -308,3 +308,94 @@ test('override / extend（spec/03 钩子 2、3）与未知路径校验', async (
     /未命中/
   );
 });
+
+// ── spec/04：HTTP 承载（graphqlPlugin，Fastify 插件）──
+
+async function makeApp(opts) {
+  const app = require('fastify')({ logger: false });
+  await app.register(require('../src/index').graphqlPlugin, opts);
+  await app.ready();
+  return app;
+}
+
+const gqlPost = (url, query) => ({
+  method: 'POST',
+  url,
+  headers: { 'content-type': 'application/json' },
+  payload: { query },
+});
+
+test('graphqlPlugin 缺省 path /graphql', async () => {
+  const app = await makeApp({ store: makeMockStore() });
+  try {
+    const res = await app.inject(gqlPost('/graphql', '{ __typename }'));
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().data.__typename, 'Query');
+  } finally {
+    await app.close();
+  }
+});
+
+test('graphqlPlugin path 可配', async () => {
+  const app = await makeApp({ store: makeMockStore(), path: '/gql' });
+  try {
+    assert.equal((await app.inject(gqlPost('/gql', '{ __typename }'))).statusCode, 200);
+    assert.equal((await app.inject(gqlPost('/graphql', '{ __typename }'))).statusCode, 404);
+  } finally {
+    await app.close();
+  }
+});
+
+test('graphqlPlugin GET 文档页', async () => {
+  const app = await makeApp({ store: makeMockStore() });
+  try {
+    assert.equal((await app.inject({ method: 'GET', url: '/graphql' })).statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test('graphqlPlugin 错误呈现：权限错误 403 + FORBIDDEN，message 原样（spec/04）', async () => {
+  const app = await makeApp({
+    store: makeMockStore(),
+    overrides: {
+      'Query.list_User': () => {
+        throw new Error('ERR_PERMISSION:无访问权限');
+      },
+    },
+  });
+  try {
+    const res = await app.inject(gqlPost('/graphql', '{ list_User { _id } }'));
+    assert.equal(res.statusCode, 403);
+    const err = res.json().errors[0];
+    assert.equal(err.extensions.code, 'FORBIDDEN');
+    assert.equal(err.message, 'ERR_PERMISSION:无访问权限');
+  } finally {
+    await app.close();
+  }
+});
+
+test('graphqlPlugin 错误呈现：非权限错误 message 原样（spec/04）', async () => {
+  const app = await makeApp({
+    store: makeMockStore(),
+    overrides: {
+      'Query.list_User': () => {
+        throw new Error('boom detail');
+      },
+    },
+  });
+  try {
+    const res = await app.inject(gqlPost('/graphql', '{ list_User { _id } }'));
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().errors[0].message, 'boom detail');
+  } finally {
+    await app.close();
+  }
+});
+
+test('graphqlPlugin 缺 store 显式报错（不静默）', async () => {
+  await assert.rejects(
+    () => require('../src/index').graphqlPlugin(require('fastify')({ logger: false }), {}),
+    /ERR_NO_STORE/
+  );
+});
