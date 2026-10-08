@@ -73,9 +73,9 @@ jobs:
             exit 1
           fi
       - name: Build
-        run: pip install build && python -m build py
+        run: pip install build && python -m build --outdir py/dist py
       - name: Twine check
-        run: pip install twine && twine check dist/*
+        run: pip install twine && twine check py/dist/*
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
