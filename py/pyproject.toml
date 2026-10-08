@@ -1,6 +1,6 @@
 [project]
 name = "store-graphql-py"
-version = "0.2.0"
+version = "0.2.1"
 description = "GraphQL adapter that auto-generates standard GraphQL APIs for py-store schemas (schema-driven CRUD over GQL, projection pushdown)"
 readme = "README.md"
 requires-python = ">=3.10"

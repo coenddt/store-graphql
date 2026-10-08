@@ -1,6 +1,6 @@
 {
   "name": "store-graphql-node",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "GraphQL adapter that auto-generates standard GraphQL APIs for nodejs-store schemas (schema-driven CRUD over GQL, projection pushdown)",
   "main": "src/index.js",
   "files": [
