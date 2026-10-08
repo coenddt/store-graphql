@@ -5,8 +5,8 @@ name: release
 # 触发:推 v* tag(版本必须与 node/package.json、py/pyproject.toml 一致),或手动 dispatch(仅校验)。
 # 凭证:
 #   - npm:NPM_TOKEN secret(仓库 Settings → Secrets → Actions;只此一处,禁入仓库/文档)
-#   - PyPI:Trusted Publishing(OIDC,无需 token)——需在 pypi.org 的 store-graphql-py
-#     项目上配置 publisher:owner=coenddt,repo=store-graphql,workflow=release.yml
+#   - PyPI:PYPI_API_TOKEN secret(user=__token__)——用户裁决(2026-10-04)皮肤层包走 API token 路线,
+#     以免去 pypi.org 网页 Trusted Publisher 配置(与 store-gateway/store-grpc/store-mcp 同路线,已留痕)。
 # go 端(module store-graphql-go)发布 = 打 `go/v*` tag 推送,Go proxy 自动拉取,无需本 workflow。
 
 on:
@@ -56,9 +56,6 @@ jobs:
     name: PyPI publish (store-graphql-py)
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write # PyPI Trusted Publishing(OIDC)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -80,3 +77,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: py/dist
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          attestations: false # 无 OIDC(id-token),不做 PEP 740 证明
+          skip-existing: true # 同名版本已存在则跳过(幂等,支持重跑)
