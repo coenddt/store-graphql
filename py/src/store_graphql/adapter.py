@@ -459,6 +459,16 @@ def create_app(
     max_query_fields=None,
     introspection=True,
 ):
+    # fail-secure 装配守卫：宿主开启上下文强制却未配 context_provider 时，装配期即
+    # 拒绝（fail-fast）；否则每请求在运行期以 ERR_NO_CONTEXT 失败（no-error-masking）。
+    require_context = getattr(store, "require_context", None)
+    if callable(require_context) and require_context() and context_provider is None:
+        raise RuntimeError(
+            "ERR_SECURE_CONFIG: 宿主已开启上下文强制（fail-secure）但未配置 context_provider；"
+            "请注入从请求解析身份的 context_provider（spec/04），"
+            "无需鉴权的内部服务请显式 store.set_require_context(False) 后再装配"
+        )
+
     try:
         from fastapi import FastAPI, Request
         from fastapi.responses import HTMLResponse, JSONResponse

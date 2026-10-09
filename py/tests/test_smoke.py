@@ -8,7 +8,7 @@ import asyncio
 import pytest
 from graphql import GraphQLBoolean, GraphQLField, graphql
 
-from store_graphql import build_graphql_schema, export_sdl, filter_archived
+from store_graphql import build_graphql_schema, create_app, export_sdl, filter_archived
 
 DEFN = {
     "name": "User",
@@ -68,6 +68,27 @@ async def run(schema, query, variable_values=None):
     if result.errors:
         raise AssertionError(f"GraphQL 执行失败: {[e.message for e in result.errors]}")
     return result.data
+
+
+def test_secure_config_guard():
+    """fail-secure 装配守卫：require_context=True 且无 context_provider ⇒ ERR_SECURE_CONFIG（先于 fastapi 加载）"""
+    closed = MockStore()
+    closed.require_context = lambda: True
+    # 无 context_provider：守卫在 import fastapi 之前抛错（fail-fast，无额外依赖）
+    with pytest.raises(RuntimeError, match="ERR_SECURE_CONFIG"):
+        create_app(closed)
+    # 补配 context_provider：越过守卫（是否缺 fastapi 由环境决定，但不再是配置错误）
+    try:
+        create_app(closed, context_provider=lambda request: {"uid": "u1"})
+    except RuntimeError as e:
+        assert "ERR_SECURE_CONFIG" not in str(e)
+    # 默认姿态 require_context=False：守卫不触发
+    opened = MockStore()
+    opened.require_context = lambda: False
+    try:
+        create_app(opened)
+    except RuntimeError as e:
+        assert "ERR_SECURE_CONFIG" not in str(e)
 
 
 def test_filter_archived():

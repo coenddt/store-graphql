@@ -10,6 +10,7 @@ const assert = require('node:assert');
 const { parse, execute } = require('graphql');
 const {
   buildGraphQLSchema,
+  createYoga,
   exportSDL,
   filterArchived,
 } = require('../src/index');
@@ -68,6 +69,22 @@ async function run(schema, query, variableValues) {
   }
   return result.data;
 }
+
+test('fail-secure 装配守卫：requireContext=true 且无 contextFactory ⇒ ERR_SECURE_CONFIG（先于 yoga 加载）', () => {
+  const closed = makeMockStore();
+  closed.requireContext = () => true;
+  // 无 contextFactory：守卫在 require graphql-yoga 之前抛错（fail-fast，无额外依赖）
+  assert.throws(() => createYoga(closed), /ERR_SECURE_CONFIG/);
+  // 补配 contextFactory：越过守卫（是否缺 yoga 由环境决定，但不再是配置错误）
+  assert.doesNotThrow(
+    () => createYoga(closed, { contextFactory: () => ({ uid: 'u1' }) }),
+    /ERR_SECURE_CONFIG/,
+  );
+  // 默认姿态 requireContext=false：守卫不触发
+  const opened = makeMockStore();
+  opened.requireContext = () => false;
+  assert.doesNotThrow(() => createYoga(opened), /ERR_SECURE_CONFIG/);
+});
 
 test('filterArchived 归档表过滤（spec/01）', () => {
   assert.deepEqual(filterArchived(['User', 'UserDeleted', 'Log']), ['User', 'Log']);

@@ -389,6 +389,15 @@ function defaultMaskError(error, message, isDev) {
 }
 
 function createYoga(store, opts = {}) {
+  // fail-secure 装配守卫：宿主开启上下文强制却未配 contextFactory 时，装配期即拒绝
+  // （fail-fast）；否则每请求在运行期以 ERR_NO_CONTEXT 失败（no-error-masking）。
+  if (typeof store.requireContext === 'function' && store.requireContext() && !opts.contextFactory) {
+    throw new Error(
+      'ERR_SECURE_CONFIG: 宿主已开启上下文强制（fail-secure）但未配置 opts.contextFactory；'
+      + '请注入从请求解析身份的 contextFactory（spec/04），'
+      + '无需鉴权的内部服务请显式 store.setRequireContext(false) 后再装配',
+    );
+  }
   let yogaMod;
   try {
     // eslint-disable-next-line global-require
