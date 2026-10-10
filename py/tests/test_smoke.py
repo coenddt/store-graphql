@@ -95,6 +95,16 @@ def test_filter_archived():
     assert filter_archived(["User", "UserDeleted", "Log"]) == ["User", "Log"]
 
 
+def test_schema_filters_reserved_builtin_models():
+    store = MockStore()
+    store.list = lambda: ["User", "UserDeleted", "__workflowRun", "__feedback"]
+    schema = build_graphql_schema(store)
+    assert schema.get_type("User") is not None
+    assert schema.get_type("__workflowRun") is None
+    assert schema.get_type("__feedback") is None
+    assert "list___workflowRun" not in schema.get_type("Query").fields
+
+
 def test_sdl_generation():
     sdl = export_sdl(build_graphql_schema(MockStore()))
     assert "type User {" in sdl

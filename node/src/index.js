@@ -119,6 +119,15 @@ function filterArchived(names) {
   );
 }
 
+// ── GraphQL 规范：`__` 前缀为 introspection 保留，不得作为类型名 ──
+// core 注册的控制面内建模型（__workflowRun / __schemaDef / __workflowDef / __feedback）
+// 一旦进 schema，assertValidSchema 判「Name "__x" must not begin with "__"」→ 全 schema 失效。
+// 该过滤为 GraphQL 皮专有约束（REST/gRPC/MCP 无此限制），故不并入与 store-api 逐字一致的
+// filterArchived；按 GraphQL 规范无条件生效（含显式 resources 入参）。
+function filterReserved(names) {
+  return names.filter((n) => !n.startsWith('__'));
+}
+
 // ── spec/01：JSON 标量（承接 condition/sort/input 的动态 JSON；只接受 variables）──
 const GraphQLJSON = new GraphQLScalarType({
   name: 'JSON',
@@ -281,7 +290,7 @@ function buildGraphQLSchema(store, opts = {}) {
   const overrides = opts.overrides || {};
   const extensions = opts.extensions || {};
 
-  const names = opts.resources || filterArchived(store.list());
+  const names = filterReserved(opts.resources || filterArchived(store.list()));
   const queryFields = {};
   const mutationFields = {};
   const usedOverrideKeys = new Set();

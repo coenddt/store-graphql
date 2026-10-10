@@ -90,6 +90,16 @@ test('filterArchived 归档表过滤（spec/01）', () => {
   assert.deepEqual(filterArchived(['User', 'UserDeleted', 'Log']), ['User', 'Log']);
 });
 
+test('schema 过滤：`__` 前缀控制面内建模型不得进 GraphQL schema（introspection 保留）', () => {
+  const store = makeMockStore();
+  store.list = () => ['User', 'UserDeleted', '__workflowRun', '__feedback'];
+  const schema = buildGraphQLSchema(store);
+  assert.ok(schema.getType('User'));
+  assert.equal(schema.getType('__workflowRun'), undefined);
+  assert.equal(schema.getType('__feedback'), undefined);
+  assert.equal(schema.getQueryType().getFields().list___workflowRun, undefined);
+});
+
 test('SDL 自动生成：类型映射与生成面（spec/01）', async () => {
   const store = makeMockStore();
   const sdl = exportSDL(buildGraphQLSchema(store));

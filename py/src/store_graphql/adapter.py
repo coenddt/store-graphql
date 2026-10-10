@@ -157,6 +157,17 @@ def filter_archived(names):
     ]
 
 
+# ── GraphQL 规范：`__` 前缀为 introspection 保留，不得作为类型名 ──
+# core 注册的控制面内建模型（__workflowRun / __schemaDef / __workflowDef / __feedback）
+# 一旦进 schema，assert_valid_schema 判「Name "__x" must not begin with "__"」→ 全 schema 失效。
+# 该过滤为 GraphQL 皮专有约束（REST/gRPC/MCP 无此限制），故不并入与 store-api 逐字一致的
+# filter_archived；按 GraphQL 规范无条件生效（含显式 resources 入参）。
+
+
+def filter_reserved(names):
+    return [n for n in names if not n.startswith("__")]
+
+
 # ── spec/01：JSON 标量（只接受 variables 传入）──
 
 GraphQLJSON = GraphQLScalarType(
@@ -348,7 +359,7 @@ def build_graphql_schema(
 ):
     overrides = dict(overrides or {})
     extensions = dict(extensions or {})
-    names = resources if resources is not None else filter_archived(store.list())
+    names = filter_reserved(resources if resources is not None else filter_archived(store.list()))
 
     query_fields = {}
     mutation_fields = {}
