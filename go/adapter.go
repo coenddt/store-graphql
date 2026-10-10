@@ -689,10 +689,10 @@ func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 		if opts.ContextProvider != nil {
 			actx, err := opts.ContextProvider(r)
 			if err != nil {
-				// spec/04：PermissionError ⇒ 403（RBAC 拒绝）；其余 ⇒ 401。
-				// 判定按 core 稳定前缀 ERR_PERMISSION:（ERR_PERM_PREFIX 契约，禁按文案匹配）。
+				// spec/04：权限类（PermissionError / 同档 NoContext）⇒ 403（RBAC 拒绝）；其余 ⇒ 401。
+				// 判定按 core 稳定前缀（ERR_PERMISSION: / ERR_NO_CONTEXT: 契约，禁按文案匹配）。
 				status := http.StatusUnauthorized
-				if isPermissionError(err) {
+				if isPermissionError(err) || isNoContextError(err) {
 					status = http.StatusForbidden
 				}
 				w.Header().Set("Content-Type", "application/json")
@@ -750,4 +750,10 @@ func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 // isPermissionError 按稳定前缀判定（core ERR_PERM_PREFIX 契约，同 store-api/go/errors.go）。
 func isPermissionError(err error) bool {
 	return err != nil && strings.HasPrefix(err.Error(), "ERR_PERMISSION:")
+}
+
+// isNoContextError 判定权限类同档的 NoContext（requireContext 开启且 ctx 缺失，
+// core 稳定前缀 ERR_NO_CONTEXT:）⇒ 403。
+func isNoContextError(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "ERR_NO_CONTEXT:")
 }

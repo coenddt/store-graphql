@@ -34,7 +34,7 @@
 ## 错误呈现（node：Yoga 掩码默认）
 
 - **默认原样透出 message**（与 py / go 一致，符合本 spec 首节「原样透传，不吞不改写」）——node 经 Yoga `maskedErrors.maskError` 实现；py/go 执行器本就原样透出，故本项为三端 parity
-- **权限类错误**（core 稳定前缀 `ERR_PERMISSION:`）⇒ HTTP **403** + `extensions.code = 'FORBIDDEN'`；message **原样保留前缀**（前缀剥离属展示层选择，禁写死进适配层）
+- **权限类错误**（core 稳定前缀 `ERR_PERMISSION:`，或权限类同档的 `NoContext`：主机 `NoContextError` machine code `no_context` / core 前缀 `ERR_NO_CONTEXT:`）⇒ HTTP **403** + `extensions.code = 'FORBIDDEN'`；message **原样保留前缀**（前缀剥离属展示层选择，禁写死进适配层）
 - 覆盖口子：`maskError` 单独覆盖掩码函数；`maskedErrors` 直通 Yoga（对外部署可传 Yoga 默认掩码或自定策略，见 [DEPLOYMENT.md](../DEPLOYMENT.md)）
 
 ## HTTP 承载封装
@@ -60,7 +60,7 @@
 | GQL 串注入 | 通过：全部用户输入（id/condition/sort/limit/input/set）经 params 值通道，零拼接进 GQL 串；投影字段名经 schema 校验方进入 resolver | core 条件编译已核实：IR 层即「参数化 SQL + 按序绑定参数」的结构性约束（`core/src/dialect/ir.rs:5-10`）；唯一例外是显式原生 SQL 通道 `raw.rs`（契约明示的设计边界） |
 | 上下文跨请求泄漏 | 通过：py ContextVar（`permission.py:24`）、node AsyncLocalStorage（`permission.js:16`）、go 显式 actx 参数 | — |
 | **权限上下文缺失（fail-open）** | **core 信任模型：`ctx: None` = 跳过权限检查，默认放行**（`core/src/permission.rs:9-20` 明文契约）。适配层不配 ContextProvider ⇒ 端点匿名可读写全库 | 生产部署必做两件事：① 配置 ContextProvider（每请求产出身份，返回 None 也显式落地）；② 开启 fail-secure 开关 `store.setRequireContext(true)`（node `index.js:247` / py `__init__.py:242`；rust host `set_require_context`，`host/src/lib.rs:143`）——开启后 ctx 缺失在 plan 入口显式报错，与 `Context::system()` 的内部调用语义彻底分离 |
-| 上下文错误分类 | PermissionError（core `ERR_PERMISSION:` 稳定前缀）⇒ 403；其余 ⇒ 401；禁按文案匹配 | — |
+| 上下文错误分类 | PermissionError（core `ERR_PERMISSION:` 稳定前缀）⇒ 403；NoContext（machine code `no_context` / `ERR_NO_CONTEXT:`，权限类同档）⇒ 403；其余 ⇒ 401；禁按文案匹配 | — |
 | 异步取消 / 中断 | 已核实安全：query 的 two-phase 为纯读；remove 多段写（归档+删除）在同一事务内，失败显式 rollback（`host/src/exec.rs:35-67`，「禁已删未归档静默失守」）；future 被 drop 时 sqlx 未提交事务自动回滚 | 仅 Rust host 直连路径受益此结构性保证；node/py/go 经各自驱动 |
 ## 查询深度守卫（2026-10 v1 落地）
 

@@ -371,11 +371,25 @@ function isPermissionError(e) {
   return String((e && e.message) || e).startsWith('ERR_PERMISSION:');
 }
 
+// isNoContextError 判定权限类同档的 NoContext（requireContext 开启且 ctx 缺失）：
+// 宿主（nodejs-store）抛 NoContextError 带 machine code `no_context`（已剥前缀）；字符串
+// 通道 host 保留 `ERR_NO_CONTEXT:` 前缀。按类型/码判定，禁按文案匹配 → 与权限类同 ⇒ 403。
+function isNoContextError(e) {
+  if (!e) return false;
+  if (e.code === 'no_context' || e.name === 'NoContextError') return true;
+  return String((e && e.message) || e).startsWith('ERR_NO_CONTEXT:');
+}
+
+// 权限类（含同档 NoContext）统一判定
+function isPermissionClass(e) {
+  return isPermissionError(e) || isNoContextError(e);
+}
+
 // spec/04：错误呈现默认——非权限错误原样透出（parity py/go，符合本 spec「原样透传」）；
 // 权限类错误附加 HTTP 403 + code FORBIDDEN，message 原样（剥前缀属展示层，走 opts.maskError）
 function defaultMaskError(error, message, isDev) {
   const orig = (error && error.originalError) || error;
-  if (!isPermissionError(error) && !isPermissionError(orig)) return error;
+  if (!isPermissionClass(error) && !isPermissionClass(orig)) return error;
   return new GraphQLError(String((error && error.message) || ''), {
     nodes: error && error.nodes,
     path: error && error.path,
@@ -459,7 +473,7 @@ function createYoga(store, opts = {}) {
         const ctx = maybe && typeof maybe.then === 'function' ? await maybe : maybe;
         store.setContext(ctx != null ? ctx : null);
       } catch (e) {
-        const status = isPermissionError(e) ? 403 : 401;
+        const status = isPermissionClass(e) ? 403 : 401;
         return new Response(
           JSON.stringify({ errors: [{ message: String((e && e.message) || e) }] }),
           { status, headers: { 'Content-Type': 'application/json' } }

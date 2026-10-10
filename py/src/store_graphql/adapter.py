@@ -516,8 +516,10 @@ def create_app(
                 ctx = context_provider(request)
                 if inspect.isawaitable(ctx):
                     ctx = await ctx
-            except Exception as e:  # noqa: BLE001 — spec/04：权限类 ⇒ 403；其余 ⇒ 401
-                status = 403 if (permission_error and isinstance(e, permission_error)) else 401
+            except Exception as e:  # noqa: BLE001 — spec/04：权限类（含同档 NoContext）⇒ 403；其余 ⇒ 401
+                is_perm = (permission_error is not None and isinstance(e, permission_error)) \
+                    or getattr(e, "code", None) == "no_context"
+                status = 403 if is_perm else 401
                 return JSONResponse(
                     status_code=status,
                     content={"errors": [{"message": str(e) or "CONTEXT_ERROR"}]},
