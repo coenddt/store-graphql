@@ -64,6 +64,7 @@ mux.Handle("/graphql", storegraphql.Handler(schema, storegraphql.Options{}))
 2. **生成面**：每模型 `get_X` / `list_X`（Query）+ `create_X` / `update_X` / `delete_X`（Mutation），字段类型按 defn 反射映射（嵌套 object 下钻，动态结构走 `JSON` 标量）
 3. **投影下推**：GraphQL selection 被序列化回现有 GQL 投影串，一次 `store.query` 取整棵数据——关系子查询 / 聚合 / 计算列 / RBAC / 方言路由全量继承 core 链路
 4. **SDL 出口**：`exportSDL()` / introspection → 喂 `@graphql-codegen` / `ariadne-codegen` / genqlient
+5. **`__` 前缀内建模型过滤**：core 控制面内建模型以 `__` 前缀命名（`__schemaDef` / `__workflowRun` 等）；`__` 为 GraphQL 规范保留（introspection），故无条件过滤出 schema、对外不可查询（该过滤为 GraphQL 皮专有约束，含显式 resources 入参）
 
 ## 自动生成之后如何自定义（四钩子，按侵入度递增）
 
@@ -81,6 +82,10 @@ mux.Handle("/graphql", storegraphql.Handler(schema, storegraphql.Options{}))
 1. **description 管道**：defn 的 `description` 键（模型级/字段级，JSON Schema 惯例）原样写入 SDL——introspection / GraphiQL / codegen 全链路携带，适配层透传不改写
 2. **交互式 Explorer**：node 由 Yoga 原生提供 GraphiQL；py / go 的 `GET /graphql` 返回 GraphiQL 文档页（`POST` 才执行查询）
 3. **静态文档站**：`exportSDL()` 是唯一出口，推荐 SpectaQL / graphql-markdown 消费，适配层不自造文档生成器
+
+## 错误与上下文
+
+- 权限类错误（core 稳定前缀 `ERR_PERMISSION:`，以及权限类同档的 `NoContext`——machine code `no_context` / 前缀 `ERR_NO_CONTEXT:`）⇒ HTTP **403** + `extensions.code: FORBIDDEN`；其余上下文错误 ⇒ **401**。按类型 / 机器码判定，禁按文案匹配。详见 [spec/04-errors-context.md](./spec/04-errors-context.md)。
 
 ## v0 范围与明确不支持项
 
