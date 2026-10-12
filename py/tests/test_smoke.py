@@ -346,10 +346,14 @@ def test_override_and_extend():
 
 def test_policy_provider_guard_and_require_context():
     """R2-04：装配守卫 + requireContext 覆盖；无 ctx 请求 → no_context；返回 None → 行为同现状"""
+    try:
+        from py_store import current_scope
+    except ModuleNotFoundError:
+        pytest.skip("py_store(optional peer) 不可解析：CI 不安装宿主包，policy_provider 流程本地验证")
+
     from types import SimpleNamespace
 
     from fastapi.testclient import TestClient
-    from py_store import current_scope
 
     # 装配守卫：宿主未导出 base_view() 时注入 policy_provider ⇒ 装配期显式失败（fail-fast，禁静默降级）
     with pytest.raises(RuntimeError, match="ERR_POLICY_PROVIDER_CONFIG"):
@@ -402,10 +406,14 @@ def test_policy_provider_guard_and_require_context():
 
 def test_policy_provider_profile_view_and_ctx_reuse():
     """R2-04：profile 覆盖经视图生效（查询面可观察）；ctx 复用自 context_provider（禁二次调用）"""
+    try:
+        from py_store import current_scope
+    except ModuleNotFoundError:
+        pytest.skip("py_store(optional peer) 不可解析：CI 不安装宿主包，policy_provider 流程本地验证")
+
     from types import SimpleNamespace
 
     from fastapi.testclient import TestClient
-    from py_store import current_scope
 
     store = MockStore()
     store.base_view = lambda: SimpleNamespace(with_policy=lambda o: {"overrides": o})
