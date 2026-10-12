@@ -1,5 +1,6 @@
 """adapter — py 端核心实现（语义依据 ../../spec/*.md，与 node 端镜像）。"""
 
+import contextlib
 import inspect
 import json
 
@@ -461,6 +462,7 @@ def create_app(
     schema=None,
     path="/graphql",
     context_provider=None,
+    policy_provider=None,
     permission_error=None,
     resources=None,
     overrides=None,
@@ -479,6 +481,23 @@ def create_app(
             "请注入从请求解析身份的 context_provider（spec/04），"
             "无需鉴权的内部服务请显式 store.set_require_context(False) 后再装配"
         )
+
+    # R2-04：policy_provider 可选注入（进程级全局单值状态，默认关闭 = 现状零变化）。
+    # 视图派生只许 store.base_view().with_policy(overrides)（皮侧禁自持 Registry——R2-04 §7），
+    # 作用域原语 with_scope 为 py-store optional peer，仅注入 policy_provider 时才加载。
+    _with_scope = None
+    if policy_provider is not None:
+        if not callable(getattr(store, "base_view", None)):
+            raise RuntimeError(
+                "ERR_POLICY_PROVIDER_CONFIG: 注入 policy_provider 需要宿主 store.base_view()"
+                "（py-store 提供）；皮侧禁自持 Registry 派生视图（R2-04 §7）"
+            )
+        try:
+            from py_store import with_scope as _with_scope  # noqa: F841 — 供请求期使用
+        except Exception as e:
+            raise RuntimeError(
+                f"ERR_DEPENDENCY_MISSING: 注入 policy_provider 需要安装 py-store（with_scope）: {e}"
+            ) from e
 
     try:
         from fastapi import FastAPI, Request
@@ -522,6 +541,7 @@ def create_app(
             return JSONResponse(
                 status_code=400, content={"errors": [{"message": "请求体必须是 JSON"}]}
             )
+        ctx = None  # R2-04：未配 context_provider 时 policy_provider 收显式 null
         if context_provider is not None:
             try:
                 ctx = context_provider(request)
@@ -537,6 +557,22 @@ def create_app(
                 )
             # spec/04：None 同样显式注入（清除语义必须落地，防身份跨请求残留）
             store.set_context(ctx)
+        # R2-04：policy_provider 收已解析 ctx（禁二次调用 provider）；返回非空则派生视图，
+        # 供执行段 with_scope 包裹（resolver 经 current_scope() 读作用域视图）；
+        # policy_provider 异常按 spec/04 同 context_provider 分类（403/401），禁吞。
+        view = None
+        if policy_provider is not None:
+            try:
+                overrides = policy_provider(ctx)
+                view = store.base_view().with_policy(overrides) if overrides is not None else None
+            except Exception as e:  # noqa: BLE001 — spec/04：权限类（含同档 NoContext）⇒ 403；其余 ⇒ 401
+                is_perm = (permission_error is not None and isinstance(e, permission_error)) \
+                    or getattr(e, "code", None) == "no_context"
+                status = 403 if is_perm else 401
+                return JSONResponse(
+                    status_code=status,
+                    content={"errors": [{"message": str(e) or "CONTEXT_ERROR"}]},
+                )
         # spec/04 深度/复杂度/introspection 守卫:执行前独立 parse 检查
         # (语法错不在此拦,维持执行器原路径;双 parse 成本微秒级,如实标注 spec/04)
         depth_limit = MAX_QUERY_DEPTH if max_query_depth is None else max_query_depth
@@ -585,12 +621,18 @@ def create_app(
                         ]
                     },
                 )
-        result = await graphql(
-            gql_schema,
-            query_str,
-            variable_values=body.get("variables"),
-            operation_name=body.get("operationName"),
+        # R2-04：resolver 执行段包进视图作用域（深度/复杂度守卫与 payload 组装不触
+        # resolver，无需进作用域；未注入 policy_provider ⇒ nullcontext 零行为变化）
+        exec_scope = (
+            _with_scope(view) if policy_provider is not None else contextlib.nullcontext()
         )
+        with exec_scope:
+            result = await graphql(
+                gql_schema,
+                query_str,
+                variable_values=body.get("variables"),
+                operation_name=body.get("operationName"),
+            )
         payload = {"data": result.data}
         if result.errors:
             payload["errors"] = [e.formatted for e in result.errors]

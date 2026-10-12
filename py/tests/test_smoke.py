@@ -4,6 +4,10 @@
 """
 
 import asyncio
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "py-store" / "src"))
 
 import pytest
 from graphql import GraphQLBoolean, GraphQLField, graphql
@@ -335,3 +339,101 @@ def test_override_and_extend():
 
     with pytest.raises(ValueError, match="未命中"):
         build_graphql_schema(store, overrides={"Query.list_Nope": override_list})
+
+
+# ── R2-04：policy_provider 请求入口作用域化（与 store-api/py/tests 同构，双端 parity）──
+
+
+def test_policy_provider_guard_and_require_context():
+    """R2-04：装配守卫 + requireContext 覆盖；无 ctx 请求 → no_context；返回 None → 行为同现状"""
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+    from py_store import current_scope
+
+    # 装配守卫：宿主未导出 base_view() 时注入 policy_provider ⇒ 装配期显式失败（fail-fast，禁静默降级）
+    with pytest.raises(RuntimeError, match="ERR_POLICY_PROVIDER_CONFIG"):
+        create_app(MockStore(), policy_provider=lambda ctx: None)
+
+    store = MockStore()
+    store.base_view = lambda: SimpleNamespace(with_policy=lambda o: {"overrides": o})
+    store.last_context = None
+
+    def _set_context(ctx):
+        store.last_context = ctx
+
+    store.set_context = _set_context
+
+    # 作用域感知的 query（模拟宿主 fail-secure：视图要求 ctx 且当前 ctx 缺失 ⇒ NoContext）
+    async def scoped_query(_gql, _params=None):
+        scope = current_scope()
+        view = scope.view if scope else None
+        if (
+            view
+            and view.get("overrides", {}).get("requireContext")
+            and store.last_context is None
+        ):
+            e = RuntimeError("ERR_NO_CONTEXT:上下文缺失")
+            e.code = "no_context"
+            raise e
+        return list(store.rows)
+
+    store.query = scoped_query
+
+    # ① 注入 requireContext 覆盖：未配 context_provider（policy_provider 收到 None）
+    seen = []
+
+    def policy(ctx):
+        seen.append(ctx)
+        return {"requireContext": True}
+
+    client = TestClient(create_app(store, policy_provider=policy))
+    denied = client.post("/graphql", json={"query": "{ list_User { _id } }"})
+    assert seen == [None]  # policy_provider 入参 = 已解析 ctx（无 context_provider ⇒ None）
+    assert denied.json()["data"] is None
+    assert denied.json()["errors"][0]["message"].startswith("ERR_NO_CONTEXT")
+
+    # ② 注入返回 None ⇒ 无视图作用域（current_scope() 为 None）→ 行为同现状
+    lax = TestClient(create_app(store, policy_provider=lambda ctx: None))
+    ok = lax.post("/graphql", json={"query": "{ list_User { _id } }"})
+    assert ok.status_code == 200
+    assert "errors" not in ok.json()
+
+
+def test_policy_provider_profile_view_and_ctx_reuse():
+    """R2-04：profile 覆盖经视图生效（查询面可观察）；ctx 复用自 context_provider（禁二次调用）"""
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+    from py_store import current_scope
+
+    store = MockStore()
+    store.base_view = lambda: SimpleNamespace(with_policy=lambda o: {"overrides": o})
+
+    # 档位判决可观察面：text2query 档视图下输出收缩（模拟 core 判决差异经宿主查询面可见）
+    async def scoped_query(_gql, _params=None):
+        scope = current_scope()
+        view = scope.view if scope else None
+        if view and view.get("overrides", {}).get("profile") == "text2query":
+            return [{"_id": "r1", "name": "redacted"}]
+        return list(store.rows)
+
+    store.query = scoped_query
+
+    ctx_calls = []
+
+    def context_provider(_request):
+        ctx_calls.append(1)
+        return {"uid": "u9"}
+
+    def policy(ctx):
+        return {"profile": "text2query"} if ctx and ctx.get("uid") == "u9" else None
+
+    client = TestClient(
+        create_app(store, context_provider=context_provider, policy_provider=policy)
+    )
+    res = client.post("/graphql", json={"query": "{ list_User { _id name } }"})
+    assert res.status_code == 200
+    assert res.json()["data"]["list_User"] == [{"_id": "r1", "name": "redacted"}]
+    # 单请求 context_provider 恰好解析一次（handler 层已解析值复用，禁二次调用）
+    assert len(ctx_calls) == 1

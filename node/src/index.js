@@ -421,6 +421,25 @@ function createYoga(store, opts = {}) {
       + '无需鉴权的内部服务请显式 store.setRequireContext(false) 后再装配',
     );
   }
+  // R2-04：policyProvider 可选注入（进程级全局单值状态，默认关闭 = 现状零变化）。
+  // 视图派生只许 store.baseView().withPolicy(overrides)（皮侧禁自持 Registry——R2-04 §7），
+  // 作用域原语 withScope 为 nodejs-store optional peer，仅注入 policyProvider 时才加载。
+  const policyProvider = opts.policyProvider || null;
+  let withScopeFn = null;
+  if (policyProvider) {
+    if (typeof store.baseView !== 'function') {
+      throw new Error(
+        'ERR_POLICY_PROVIDER_CONFIG: 注入 policyProvider 需要宿主 store.baseView()'
+        + '（nodejs-store 提供）；皮侧禁自持 Registry 派生视图（R2-04 §7）',
+      );
+    }
+    try {
+      // eslint-disable-next-line global-require
+      withScopeFn = require('nodejs-store').withScope;
+    } catch (e) {
+      throw new Error(`ERR_DEPENDENCY_MISSING: 注入 policyProvider 需要安装 nodejs-store（withScope）: ${(e && e.message) || e}`);
+    }
+  }
   let yogaMod;
   try {
     // eslint-disable-next-line global-require
@@ -474,13 +493,30 @@ function createYoga(store, opts = {}) {
   });
   // 包装层：每请求先跑 contextFactory 并按 spec/04 分类（403/401），再进 Yoga 执行
   const handler = async (req, serverCtx) => {
+    let ctx = null;
     if (opts.contextFactory) {
       try {
         // spec/04：每请求注入；同步 contextFactory 走快路径——不引入 await 微任务，
         // 避免 AsyncLocalStorage.enterWith 在微任务里落地致上下文传不到 resolver（返回 null 同样显式落地清除）
         const maybe = opts.contextFactory({ request: req, serverContext: serverCtx });
-        const ctx = maybe && typeof maybe.then === 'function' ? await maybe : maybe;
+        ctx = maybe && typeof maybe.then === 'function' ? await maybe : maybe;
         store.setContext(ctx != null ? ctx : null);
+      } catch (e) {
+        const status = isPermissionClass(e) ? 403 : 401;
+        return new Response(
+          JSON.stringify({ errors: [{ message: String((e && e.message) || e) }] }),
+          { status, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+    // R2-04：policyProvider 收已解析 ctx（未配 contextFactory ⇒ null，禁二次调用 provider）；
+    // 返回非空则派生视图并以 withScope 包裹 Yoga 执行（resolver 经 currentView() 读作用域视图）；
+    // policyProvider 异常按 spec/04 同 contextFactory 分类（403/401），禁吞。
+    if (policyProvider) {
+      try {
+        const overrides = policyProvider(ctx != null ? ctx : null);
+        const view = overrides ? store.baseView().withPolicy(overrides) : null;
+        return withScopeFn(view ? { view } : null, () => yoga(req, serverCtx));
       } catch (e) {
         const status = isPermissionClass(e) ? 403 : 401;
         return new Response(
