@@ -45,6 +45,36 @@
     },
     {
       "op": "query",
+      "query": "query($c: JSON) { list_User(condition: $c) { _id _score } }",
+      "variables": { "c": { "name": { "$near": { "$vector": [0.1, 0.2], "$limit": 2 } } } },
+      "expect": {
+        "gql": "User($condition:@c0) { _id, _score }",
+        "_comment": "04:含 $near 时不拼根 $limit;向量查询条数唯一来源是 $near.$limit"
+      }
+    },
+    {
+      "op": "query",
+      "query": "query($c: JSON, $l: Int) { list_User(condition: $c, limit: $l) { _id } }",
+      "variables": {
+        "c": { "name": { "$near": { "$vector": [0.1, 0.2], "$limit": 2 } } },
+        "l": 10
+      },
+      "expect": {
+        "errorCodePrefix": "ERR_LIMIT:",
+        "_comment": "04:显式 limit 与 $near 互斥"
+      }
+    },
+    {
+      "op": "query",
+      "query": "query($c: JSON) { list_User(condition: $c) { _id } }",
+      "variables": { "c": { "name": { "$near": { "$vector": [0.1, 0.2], "$limit": 5000 } } } },
+      "expect": {
+        "errorCodePrefix": "ERR_LIMIT:",
+        "_comment": "04:$near.$limit 上界由皮守卫"
+      }
+    },
+    {
+      "op": "query",
       "query": "{ get_User(id: \"u1\") { name } }",
       "variables": {},
       "expect": { "dataKeys": ["get_User"] }

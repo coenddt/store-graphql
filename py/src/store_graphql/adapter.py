@@ -218,6 +218,8 @@ def _map_fields(fields, type_name):
 def _model_fields(defn):
     merged = dict(defn.get("fields") or {})
     merged.update(defn.get("computes") or {})  # spec/01：computes 视同字段
+    # `_score`：向量检索派生列（04），恒注入且可空
+    merged["_score"] = {"type": "float", "description": "向量检索相似度得分（越大越相似）"}
     return merged
 
 
@@ -296,12 +298,44 @@ def _make_get(store, name, id_field):
     return resolve
 
 
+def _find_key(node, key):
+    """深度优先找第一个同名键（`$near` 只允许出现一次，由 core 保证）。"""
+    if isinstance(node, dict):
+        if key in node:
+            return node[key]
+        for v in node.values():
+            hit = _find_key(v, key)
+            if hit is not None:
+                return hit
+    elif isinstance(node, (list, tuple)):
+        for v in node:
+            hit = _find_key(v, key)
+            if hit is not None:
+                return hit
+    return None
+
+
+def _vector_limit_guard(condition, explicit_limit):
+    """含 `$near` → 返回 True（不拼根 `$limit`）；显式 limit 并用 → ERR_LIMIT。"""
+    near = _find_key(condition, "$near")
+    if near is None:
+        return False
+    if explicit_limit is not None:
+        raise ValueError("ERR_LIMIT:list limit 与 $near.$limit 互斥，请只传 $near.$limit")
+    if isinstance(near, dict):
+        n = near.get("$limit")
+        if isinstance(n, int) and n > LIST_LIMIT_MAX:
+            raise ValueError(f"ERR_LIMIT:$near.$limit 上限 {LIST_LIMIT_MAX},收到 {n}")
+    return True
+
+
 def _make_list(store, name):
     async def resolve(_src, info, *, condition=None, sort=None, limit=None):
+        has_near = _vector_limit_guard(condition, limit)
         # spec/02 limit 守卫:缺省 50 防全表;超上限抛错(ERR_LIMIT: 稳定前缀),不静默截断
         if limit is None:
             limit = LIST_LIMIT_DEFAULT
-        if limit > LIST_LIMIT_MAX:
+        if not has_near and limit > LIST_LIMIT_MAX:
             raise ValueError(f"ERR_LIMIT:list limit 上限 {LIST_LIMIT_MAX},收到 {limit}")
         projection = projection_from_info(info)
         head = name
@@ -312,8 +346,9 @@ def _make_list(store, name):
         if sort is not None:
             parts.append("$sort:@s1")
             params["s1"] = sort
-        parts.append("$limit:@l")
-        params["l"] = limit
+        if not has_near:  # 向量查询的条数唯一来源是 $near.$limit
+            parts.append("$limit:@l")
+            params["l"] = limit
         head += f"({','.join(parts)})"
         return await store.query(f"{head} {{ {projection} }}", params)
 

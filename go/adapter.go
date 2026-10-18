@@ -261,6 +261,11 @@ func modelFields(defn map[string]any) map[string]any {
 			merged[k] = v
 		}
 	}
+	// `_score`：向量检索派生列（04），恒注入且可空
+	merged["_score"] = map[string]any{
+		"type":        "float",
+		"description": "向量检索相似度得分（越大越相似）",
+	}
 	return merged
 }
 
@@ -425,15 +430,75 @@ const (
 	listLimitMax     = 1000
 )
 
+// findByKey 深度优先找第一个同名键（`$near` 只允许出现一次，由 core 保证）。
+func findByKey(node any, key string) any {
+	switch v := node.(type) {
+	case map[string]any:
+		if hit, ok := v[key]; ok {
+			return hit
+		}
+		for _, sub := range v {
+			if hit := findByKey(sub, key); hit != nil {
+				return hit
+			}
+		}
+	case []any:
+		for _, sub := range v {
+			if hit := findByKey(sub, key); hit != nil {
+				return hit
+			}
+		}
+	}
+	return nil
+}
+
+func asInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	}
+	return 0, false
+}
+
+// vectorLimitGuard 含 `$near` → true（不拼根 `$limit`）；显式 limit 并用 → ERR_LIMIT。
+func vectorLimitGuard(condition any, explicit *int) (bool, error) {
+	near := findByKey(condition, "$near")
+	if near == nil {
+		return false, nil
+	}
+	if explicit != nil {
+		return true, fmt.Errorf("ERR_LIMIT:list limit 与 $near.$limit 互斥，请只传 $near.$limit")
+	}
+	if m, ok := near.(map[string]any); ok {
+		if n, ok := asInt(m["$limit"]); ok && n > listLimitMax {
+			return true, fmt.Errorf("ERR_LIMIT:$near.$limit 上限 %d,收到 %d", listLimitMax, n)
+		}
+	}
+	return true, nil
+}
+
 func makeList(st Store, name string, allFields []string) graphql.FieldResolveFn {
 	return func(p graphql.ResolveParams) (interface{}, error) {
+		var explicit *int
+		if v, ok := p.Args["limit"]; ok && v != nil {
+			n := v.(int)
+			explicit = &n
+		}
+		hasNear, err := vectorLimitGuard(p.Args["condition"], explicit)
+		if err != nil {
+			return nil, err
+		}
 		// spec/02 limit 守卫：缺省 50 防全表；超上限抛错（ERR_LIMIT: 稳定前缀），不静默截断
 		limit := listLimitDefault
-		if v, ok := p.Args["limit"]; ok && v != nil {
-			limit = v.(int)
-			if limit > listLimitMax {
-				return nil, fmt.Errorf("ERR_LIMIT:list limit 上限 %d,收到 %d", listLimitMax, limit)
-			}
+		if explicit != nil {
+			limit = *explicit
+		}
+		if !hasNear && limit > listLimitMax {
+			return nil, fmt.Errorf("ERR_LIMIT:list limit 上限 %d,收到 %d", listLimitMax, limit)
 		}
 		proj := projectionFrom(p, allFields)
 		parts, params := []string{}, map[string]any{}
@@ -445,8 +510,10 @@ func makeList(st Store, name string, allFields []string) graphql.FieldResolveFn 
 			parts = append(parts, "$sort:@s1")
 			params["s1"] = v
 		}
-		parts = append(parts, "$limit:@l")
-		params["l"] = limit
+		if !hasNear { // 向量查询的条数唯一来源是 $near.$limit
+			parts = append(parts, "$limit:@l")
+			params["l"] = limit
+		}
 		head := name + "(" + strings.Join(parts, ",") + ")"
 		return st.Query(p.Context, fmt.Sprintf("%s { %s }", head, proj), params, actxFrom(p.Context))
 	}
@@ -630,6 +697,7 @@ func defnFieldKeys(defn map[string]any) []string {
 			out = append(out, k)
 		}
 	}
+	out = append(out, "_score") // 04：回退投影必须包含派生列
 	return out
 }
 

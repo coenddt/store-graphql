@@ -180,7 +180,12 @@ function mapFields(fields, typeName) {
 
 function modelFields(defn) {
   // fields + computes 视同字段进入类型（spec/01）
-  return { ...(defn.fields || {}), ...(defn.computes || {}) };
+  // `_score`：向量检索派生列（04），恒注入且可空 —— 未请求时 core 不产出该键
+  return {
+    ...(defn.fields || {}),
+    ...(defn.computes || {}),
+    _score: { type: 'float', description: '向量检索相似度得分（越大越相似）' },
+  };
 }
 
 // ── spec/02：selection → GQL 投影串（fragments 展开 + @skip/@include 求值 + 空投影回退）──
@@ -242,11 +247,51 @@ function makeGet(store, name, idField) {
   };
 }
 
+// ── 04：`$near` 与根 `$limit` 互斥（spec/02）──
+
+/** 深度优先找第一个同名键（`$near` 只允许出现一次，由 core 保证） */
+function findByKey(node, key) {
+  if (node == null || typeof node !== 'object') return null;
+  if (Array.isArray(node)) {
+    for (const v of node) {
+      const hit = findByKey(v, key);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (Object.prototype.hasOwnProperty.call(node, key)) return node[key];
+  for (const v of Object.values(node)) {
+    const hit = findByKey(v, key);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * 校验并返回是否含 `$near`。
+ * 契约：含 `$near` → 不拼根 `$limit`；显式 limit 与 `$near` 并用 → ERR_LIMIT；
+ *       `$near.$limit` 上界在这里守，必填交给 core（避免两处文案漂移）。
+ */
+function vectorLimitGuard(condition, explicitLimit) {
+  const near = findByKey(condition, '$near');
+  if (!near) return false;
+  if (explicitLimit != null) {
+    throw new Error('ERR_LIMIT:list limit 与 $near.$limit 互斥，请只传 $near.$limit');
+  }
+  const n = near.$limit;
+  if (n != null && n > LIST_LIMIT_MAX) {
+    throw new Error(`ERR_LIMIT:$near.$limit 上限 ${LIST_LIMIT_MAX},收到 ${n}`);
+  }
+  return true;
+}
+
 function makeList(store, name) {
   return async (_src, args, _ctx, info) => {
+    // 04：先判 `$near`，再走 limit 守卫（顺序不可颠倒：互斥文案优先于上界文案）
+    const hasNear = vectorLimitGuard(args.condition, args.limit);
     // spec/02 limit 守卫：缺省 50 防全表；超上限抛错（ERR_LIMIT: 稳定前缀），不静默截断
     const limit = args.limit != null ? args.limit : LIST_LIMIT_DEFAULT;
-    if (limit > LIST_LIMIT_MAX) {
+    if (!hasNear && limit > LIST_LIMIT_MAX) {
       throw new Error(`ERR_LIMIT:list limit 上限 ${LIST_LIMIT_MAX},收到 ${limit}`);
     }
     const projection = projectionFromResolveInfo(info);
@@ -255,8 +300,10 @@ function makeList(store, name) {
     const params = {};
     if (args.condition != null) { parts.push('$condition:@c0'); params.c0 = args.condition; }
     if (args.sort != null) { parts.push('$sort:@s1'); params.s1 = args.sort; }
-    parts.push('$limit:@l');
-    params.l = limit;
+    if (!hasNear) {                       // 04：向量查询的条数唯一来源是 $near.$limit
+      parts.push('$limit:@l');
+      params.l = limit;
+    }
     head += `(${parts.join(',')})`;
     return store.query(`${head} { ${projection} }`, params);
   };
