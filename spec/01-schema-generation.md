@@ -21,9 +21,13 @@
 | `bool` | `Boolean` | |
 | `object`（含 `fields`） | 嵌套 ObjectType，命名 `<父类型>_<字段路径>` | 递归下钻 |
 | `object`（无 `fields`）/ `array` / 其他未知 | `JSON`（自定义标量） | 不丢语义的最小承诺 |
+| 派生列 | `_score` | `Float`（可空） |
 
 - `_id` ⇒ `ID!`（非空）；其余字段一律可空（写入缺省 / 权限裁剪都可能产生 null，不做无依据的非空承诺）
 - `computes.*` 视同字段进入类型（type 同上映射；出处：course-platform defn 中 computes 携带自身 `type`）
+- `_score` 由向量检索（`$near`）产出，恒注入每个模型类型，可空；
+  非向量查询请求 `_score` 由 core 显式报错（见 04 §4.3）。
+- `_score` 为保留名，schema 的 fields / relations / computes 均不得声明。
 
 ## 自定义标量 `JSON`
 

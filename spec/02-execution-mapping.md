@@ -20,6 +20,8 @@
 - 三端 resolver 守卫：**缺省补 `limit: 50`**（防忘传全表，恒拼接 `$limit:@l`）；**显式 `limit > 1000` ⇒ resolver 抛错**，错误信息带稳定前缀 `ERR_LIMIT:`（对齐 core `ERR_PERMISSION:` 的前缀契约风格，客户端可判定；遵循「允许被拦截、禁止静默失守」，不静默截断）
 - `limit ≤ 0` 与非整数：原样传 core，语义归 core（适配层不发明；待核实 v1）
 - 数值（缺省 50 / 上限 1000）为适配层常量，调整先改本 spec 再三端同步
+- `condition` 含 `$near` 时：**不拼**根 `$limit`；显式传 `limit` → `ERR_LIMIT:`；
+  `$near.$limit > 1000` → `ERR_LIMIT:`。`$near.$limit` 必填由 core 校验。
 
 ## Mutation 语义
 
