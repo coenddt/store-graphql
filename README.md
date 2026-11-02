@@ -68,8 +68,8 @@ standard GraphQL schema and executes requests through store's existing GQL path.
 1. **Single generation source** — the store's plain JSON schema (`defn`), the *same*
    source used by the REST skin `store-api`. The adapter introduces no second type
    system.
-2. **Surface** — for every model `X`, it generates `get_X` / `list_X` on `Query` and
-   `create_X` / `update_X` / `delete_X` on `Mutation`. Field types are reflected from
+2. **Surface** — for every model `X`, it generates `getX` / `listX` on `Query` and
+   `createX` / `updateX` / `deleteX` on `Mutation`. Field types are reflected from
    the defn (nested `object`s are walked down into nested object types; dynamic
    structures become the `JSON` scalar).
 3. **Projection pushdown** — the GraphQL selection is serialized back into the
@@ -116,7 +116,7 @@ The adapters only use these public store methods (duck-typed; Go aligns with the
 
 - You need real-time push semantics (subscriptions) — store has none, and this skin
   does not invent them.
-- You need offset/paging-by-skip, output aliases, or an aggregate `count_X` root — all
+- You need offset/paging-by-skip, output aliases, or an aggregate `countX` root — all
   deferred to v1 (see [v0 scope](#v0-scope-and-non-goals)).
 - You need write-heavy GraphQL batching — batching is off (one document per request).
 - You want the adapter to own authn — it does not; you inject a context provider and
@@ -239,7 +239,7 @@ async def main():
 
         # Or skip FastAPI entirely and execute yourself:
         # from graphql import graphql
-        # result = await graphql(schema, "{ list_User { _id name } }")
+        # result = await graphql(schema, "{ listUser { _id name } }")
 
 asyncio.run(main())
 ```
@@ -307,14 +307,14 @@ the same rule.
 type X { _id: ID!, ...fields, ...computes }
 
 type Query {
-  get_X(id: ID!): X
-  list_X(condition: JSON, sort: JSON, limit: Int): [X!]!
+  getX(id: ID!): X
+  listX(condition: JSON, sort: JSON, limit: Int): [X!]!
 }
 
 type Mutation {
-  create_X(input: JSON!): X
-  update_X(id: ID!, set: JSON!): X
-  delete_X(id: ID!): Boolean!
+  createX(input: JSON!): X
+  updateX(id: ID!, set: JSON!): X
+  deleteX(id: ID!): Boolean!
 }
 ```
 
@@ -336,14 +336,14 @@ type User_profile {
 }
 
 type Query {
-  get_User(id: ID!): User
-  list_User(condition: JSON, sort: JSON, limit: Int): [User!]!
+  getUser(id: ID!): User
+  listUser(condition: JSON, sort: JSON, limit: Int): [User!]!
 }
 
 type Mutation {
-  create_User(input: JSON!): User
-  update_User(id: ID!, set: JSON!): User
-  delete_User(id: ID!): Boolean!
+  createUser(input: JSON!): User
+  updateUser(id: ID!, set: JSON!): User
+  deleteUser(id: ID!): Boolean!
 }
 ```
 
@@ -361,8 +361,8 @@ See [`spec/05-documentation.md`](./spec/05-documentation.md).
 (`print_schema`). Go: v0 has no offline exporter; SDL is defined by introspection.
 
 > **To be verified (v1):** the real core parameter name for offset paging
-> (`$skip` / `$page`) — until confirmed, `list_X` exposes no offset argument (better
-> to omit than invent). The `count_X` aggregation root (`QueryWithCount`, already in
+> (`$skip` / `$page`) — until confirmed, `listX` exposes no offset argument (better
+> to omit than invent). The `countX` aggregation root (`QueryWithCount`, already in
 > Go) needs a Node/Python equivalent — until confirmed it is not generated.
 
 ## Execution mapping
@@ -382,9 +382,9 @@ dialect all ride the original core path.
 | `sort` | `$sort:@s1` | `s1` | only when non-null |
 | `limit` | `$limit:@l` | `l` | always (see the limit guard) |
 
-- `get_X(id)` ⇒ `X($condition:@c0) { <projection> }` with `c0 = {"_id": id}`; returns
+- `getX(id)` ⇒ `X($condition:@c0) { <projection> }` with `c0 = {"_id": id}`; returns
   the first row, or `null` if empty.
-- `list_X(...)` ⇒ the parameter head above (as needed) plus `{ <projection> }`.
+- `listX(...)` ⇒ the parameter head above (as needed) plus `{ <projection> }`.
 - The primary-key field name `id_field` is fixed to `_id` in v0 (same as `store-api
   spec/01`; the argument surface does not change).
 
@@ -406,9 +406,9 @@ adapter-level constants — change the spec first, then all three runtimes.
 
 | Operation | store call | Returns |
 |---|---|---|
-| `create_X` | `insert(X, input)` | the full document after insert |
-| `update_X` | `update(X, {"_id": id}, set)`, then read back by selection | the read-back document (does not rely on `update`'s return shape; identical on all runtimes) |
-| `delete_X` | `remove(X, {"_id": id})` | `true` (failures go through the error channel) |
+| `createX` | `insert(X, input)` | the full document after insert |
+| `updateX` | `update(X, {"_id": id}, set)`, then read back by selection | the read-back document (does not rely on `update`'s return shape; identical on all runtimes) |
+| `deleteX` | `remove(X, {"_id": id})` | `true` (failures go through the error channel) |
 
 **Selection → projection string** (Node / Python do exact pushdown):
 
@@ -423,7 +423,7 @@ adapter-level constants — change the spec first, then all three runtimes.
    so the GQL string stays valid.
 
 **Paging.** No offset/skip paging and no cursor (`$skip` / `$page` are "to be
-verified" in v1). `list_X` is capped by `limit` (default 50, hard cap 1000).
+verified" in v1). `listX` is capped by `limit` (default 50, hard cap 1000).
 
 **Go v0 differences.** Projection serialization reads `ResolveParams.Info.FieldASTs`
 directly; fragment expansion is not implemented (v1), so a request with fragments is
@@ -460,21 +460,21 @@ Replace a generated resolver by field path; the generated surface stays unchange
 // Node
 buildGraphQLSchema(store, {
   overrides: {
-    'Query.list_User': async (src, args, ctx, info) => myCustomList(args, info),
+    'Query.listUser': async (src, args, ctx, info) => myCustomList(args, info),
   },
 });
 ```
 
 ```python
 # Python
-build_graphql_schema(store, overrides={"Query.list_User": my_custom_list})
+build_graphql_schema(store, overrides={"Query.listUser": my_custom_list})
 ```
 
 ```go
 // Go
 storegraphql.Build(st, storegraphql.Options{
     Overrides: map[string]graphql.FieldResolveFn{
-        "Query.list_User": func(p graphql.ResolveParams) (interface{}, error) { return myCustomList(p) },
+        "Query.listUser": func(p graphql.ResolveParams) (interface{}, error) { return myCustomList(p) },
     },
 })
 ```
@@ -596,7 +596,7 @@ shot; a naive resolver-per-field design would issue a second query per row.
 
 ```graphql
 query($c: JSON, $l: Int) {
-  list_User(condition: $c, limit: $l) {
+  listUser(condition: $c, limit: $l) {
     _id
     name
     profile { bio }
@@ -619,7 +619,7 @@ params = { c0: { name: "a" }, l: 10 }
 ```json
 {
   "data": {
-    "list_User": [
+    "listUser": [
       { "_id": "u1", "name": "a", "profile": { "bio": "hello" } }
     ]
   }
@@ -680,7 +680,7 @@ generates:
 ```graphql
 # src/queries/ListUsers.graphql
 query ListUsers($c: JSON, $l: Int) {
-  list_User(condition: $c, limit: $l) { _id name }
+  listUser(condition: $c, limit: $l) { _id name }
 }
 ```
 
@@ -689,7 +689,7 @@ import { GraphQLClient } from 'graphql-request';
 import { getSdk } from './gql/graphql';
 
 const sdk = getSdk(new GraphQLClient('http://localhost:4000/graphql'));
-const { list_User } = await sdk.ListUsers({ c: { name: 'a' }, l: 10 });
+const { listUser } = await sdk.ListUsers({ c: { name: 'a' }, l: 10 });
 ```
 
 **Why it wins.** SDL is the single exit point; the adapter ships no client generator of
@@ -705,7 +705,7 @@ bounded read to a mobile app without building a bespoke endpoint.
 
 ```graphql
 query($c: JSON, $s: JSON, $l: Int) {
-  list_User(condition: $c, sort: $s, limit: $l) {
+  listUser(condition: $c, sort: $s, limit: $l) {
     _id
     name
     age
@@ -727,7 +727,7 @@ params = { c0: { age: 18 }, s1: { age: -1 }, l: 20 }
 ```json
 {
   "data": {
-    "list_User": [
+    "listUser": [
       { "_id": "u1", "name": "a", "age": 30 }
     ]
   }
@@ -746,7 +746,7 @@ gains no new semantics and no data is cached in the adapter.
 
 ```graphql
 mutation($input: JSON!) {
-  create_User(input: $input) { _id name age }
+  createUser(input: $input) { _id name age }
 }
 ```
 
@@ -757,19 +757,19 @@ with a real generated `_id` (e.g. `"u1"`, `u`-prefixed by `idPrefix`).
 
 ```graphql
 mutation($id: ID!, $set: JSON!) {
-  update_User(id: $id, set: $set) { name age }
+  updateUser(id: $id, set: $set) { name age }
 }
 ```
 
-Variables: `{ "id": "u1", "set": { "age": 31 } }` → `{ "update_User": { "name": "alice", "age": 31 } }`
+Variables: `{ "id": "u1", "set": { "age": 31 } }` → `{ "updateUser": { "name": "alice", "age": 31 } }`
 
 **Delete.**
 
 ```graphql
-mutation { delete_User(id: "u1") }
+mutation { deleteUser(id: "u1") }
 ```
 
-→ `{ "delete_User": true }`; a subsequent `{ list_User { _id } }` returns `[]`.
+→ `{ "deleteUser": true }`; a subsequent `{ listUser { _id } }` returns `[]`.
 
 **Why it wins.** Writes reuse store's `insert/update/remove`, so archive orchestration
 and RBAC apply; `update` deliberately reads back so all runtimes agree regardless of
@@ -803,15 +803,15 @@ GraphiQL too.
 { "name": "AuditEvent", "x-graphql": { "readonly": true }, "fields": { "_id": { "type": "string" } } }
 ```
 
-**Verification.** SDL contains `get_AuditEvent` (and `list_AuditEvent`) but **no**
-`create_AuditEvent` / `update_AuditEvent` / `delete_AuditEvent`.
+**Verification.** SDL contains `getAuditEvent` (and `listAuditEvent`) but **no**
+`createAuditEvent` / `updateAuditEvent` / `deleteAuditEvent`.
 
 **Why it wins.** The GraphQL surface is narrowed declaratively while store RBAC keeps
 enforcing independently — two independent layers, no duplicated logic.
 
 ### 8. Override one resolver by path
 
-**Business background.** `list_User` must return a specialized shape computed outside
+**Business background.** `listUser` must return a specialized shape computed outside
 the generic path, but the schema must not change.
 
 **Setup (Node).**
@@ -819,7 +819,7 @@ the generic path, but the schema must not change.
 ```js
 buildGraphQLSchema(store, {
   overrides: {
-    'Query.list_User': async () => [{ _id: 'x', name: 'override', age: 0, profile: null }],
+    'Query.listUser': async () => [{ _id: 'x', name: 'override', age: 0, profile: null }],
   },
 });
 ```
@@ -827,12 +827,12 @@ buildGraphQLSchema(store, {
 **Request / response.**
 
 ```graphql
-{ list_User { name } }
+{ listUser { name } }
 ```
 
-→ `{ "data": { "list_User": [ { "name": "override" } ] } }`
+→ `{ "data": { "listUser": [ { "name": "override" } ] } }`
 
-An unmatched path such as `Query.list_Nope` makes the build throw
+An unmatched path such as `Query.listNope` makes the build throw
 `override 路径 "..." 未命中任何生成字段` instead of silently doing nothing.
 
 **Why it wins.** You swap behavior at exactly one path while SDL stays byte-identical,
@@ -853,7 +853,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:4000/graphql \
 **Over-limit `limit`** → HTTP 200 with `errors[0].message` starting `ERR_LIMIT:`:
 
 ```graphql
-query($l: Int) { list_User(limit: $l) { _id } }   # variables: { "l": 1001 }
+query($l: Int) { listUser(limit: $l) { _id } }   # variables: { "l": 1001 }
 ```
 
 **Too-deep query** (depth 11 > 10) → **HTTP 400**, `errors[0].message` starting
@@ -961,11 +961,11 @@ it into alerting:
 
 **Supported**
 
-- Query: `get_X` / `list_X` with `condition` / `sort` / `limit`
+- Query: `getX` / `listX` with `condition` / `sort` / `limit`
   (**limit defaults to 50, caps at 1000, over-limit throws `ERR_LIMIT:`** — core's row
   cap only applies to the text2query profile; the adapter enforces the upper bound, see
   `spec/02`).
-- Mutation: `create_X` / `update_X` / `delete_X`.
+- Mutation: `createX` / `updateX` / `deleteX`.
 - Introspection; fragments and `@skip` / `@include` (implemented on Node / Python / Go).
 - Annotations (`x-graphql.hidden` / `x-graphql.readonly`), overrides, extensions, and
   the schema-first escape hatch.
@@ -974,7 +974,7 @@ it into alerting:
 
 - **subscriptions** — store has no subscription semantics, so the skin does not invent
   them.
-- Output aliases, skip/offset paging (`$skip`), and the `count_X` aggregation root —
+- Output aliases, skip/offset paging (`$skip`), and the `countX` aggregation root —
   deferred to v1 after the core semantics are confirmed (see the "to be verified" notes
   in `spec/01` and `spec/02`).
 - Request batching — one document per request on all runtimes.
@@ -1006,20 +1006,20 @@ throws `ERR_LIMIT:` rather than truncating silently.
 (`__schemaDef`, `__workflowRun`, …) would make the whole schema invalid, so they are
 unconditionally filtered out.
 
-**5. Can I change the naming (`get_User`, `list_User`, …)?**
+**5. Can I change the naming (`getUser`, `listUser`, …)?**
 The naming is fixed and part of the cross-runtime contract. To reshape it, use Hook 4
 (edit SDL) or Hook 3 (add fields with your own names).
 
 **6. Does it support subscriptions?**
 No — store has no subscription semantics and the skin invents none.
 
-**7. Does it support offset paging, aliases, or `count_X`?**
+**7. Does it support offset paging, aliases, or `countX`?**
 Not in v0. The core parameter names for offset paging and a Node/Python
 `QueryWithCount` equivalent are still "to be verified", so these are deferred to v1
 rather than guessed.
 
 **8. How do I customize a single resolver without changing the schema?**
-Use Hook 2 — override by path, e.g. `overrides: { 'Query.list_User': myResolver }`.
+Use Hook 2 — override by path, e.g. `overrides: { 'Query.listUser': myResolver }`.
 
 **9. How do I disable introspection in production?**
 Pass `introspection: false` (Node/Python) or `DisableIntrospection: true` (Go). Requests

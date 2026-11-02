@@ -207,7 +207,7 @@ func TestSDLGeneration(t *testing.T) {
 		t.Fatalf("introspection 失败: %v", res.Errors)
 	}
 	sdl := sprintIntrospection(t, res)
-	for _, want := range []string{"get_User", "list_User", "create_User", "update_User", "delete_User"} {
+	for _, want := range []string{"getUser", "listUser", "createUser", "updateUser", "deleteUser"} {
 		if !strings.Contains(sdl, want) {
 			t.Errorf("SDL 缺少 %q，实际:\n%s", want, sdl)
 		}
@@ -262,14 +262,14 @@ func TestLimitGuard(t *testing.T) {
 	st := newMockStore(t)
 	schema := buildTestSchema(t, st, Options{})
 
-	do(t, schema, `{ list_User { _id } }`, nil)
+	do(t, schema, `{ listUser { _id } }`, nil)
 	last := st.gqlLog[len(st.gqlLog)-1]
 	if last != "User($limit:@l) { _id }" {
 		t.Fatalf("缺省应恒拼 $limit:@l:\n got: %s", last)
 	}
 	// params.l = 50 经 do 的 res 断言不可见,直接再查一次带显式变量确认守卫放行路径
 	res := graphql.Do(graphql.Params{Schema: schema, Context: context.Background(),
-		RequestString: `query($l: Int){ list_User(limit: $l){ _id } }`,
+		RequestString: `query($l: Int){ listUser(limit: $l){ _id } }`,
 		VariableValues: map[string]interface{}{"l": 1000}})
 	if res.HasErrors() {
 		t.Fatalf("边界 1000 应通过: %v", res.Errors)
@@ -279,7 +279,7 @@ func TestLimitGuard(t *testing.T) {
 	}
 
 	over := graphql.Do(graphql.Params{Schema: schema, Context: context.Background(),
-		RequestString: `query($l: Int){ list_User(limit: $l){ _id } }`,
+		RequestString: `query($l: Int){ listUser(limit: $l){ _id } }`,
 		VariableValues: map[string]interface{}{"l": 1001}})
 	if !over.HasErrors() || !strings.Contains(over.Errors[0].Error(), "ERR_LIMIT:") {
 		t.Fatalf("超限应带 ERR_LIMIT: 前缀: %v", over.Errors)
@@ -296,17 +296,17 @@ func TestQueryDepthGuard(t *testing.T) {
 	if d := queryDepth(doc); d != 11 {
 		t.Fatalf("11 层深度应为 11,实际 %d", d)
 	}
-	shallow, _ := parser.Parse(parser.ParseParams{Source: `{ list_User { _id } }`})
+	shallow, _ := parser.Parse(parser.ParseParams{Source: `{ listUser { _id } }`})
 	if d := queryDepth(shallow); d != 2 {
 		t.Fatalf("浅查询深度应为 2,实际 %d", d)
 	}
 	fragDoc, _ := parser.Parse(parser.ParseParams{
-		Source: `query { ...A } fragment A on Query { list_User { _id } }`})
+		Source: `query { ...A } fragment A on Query { listUser { _id } }`})
 	if d := queryDepth(fragDoc); d != 2 {
 		t.Fatalf("fragment 深度应计入,实际 %d", d)
 	}
 	cycleDoc, _ := parser.Parse(parser.ParseParams{
-		Source: `query { ...A } fragment A on Query { list_User { ...A } }`})
+		Source: `query { ...A } fragment A on Query { listUser { ...A } }`})
 	if d := queryDepth(cycleDoc); d != 1 {
 		t.Fatalf("环引用应给有限值(防环),实际 %d", d)
 	}
@@ -321,10 +321,10 @@ func TestQueryDepthGuard(t *testing.T) {
 		handler(rec, req)
 		return rec
 	}
-	if rec := post(`{"query":"{ list_User { _id } }"}`); rec.Code != http.StatusOK {
+	if rec := post(`{"query":"{ listUser { _id } }"}`); rec.Code != http.StatusOK {
 		t.Fatalf("深度 2 应放行,实际 %d", rec.Code)
 	}
-	rec := post(`{"query":"{ list_User { profile { bio } } }"}`)
+	rec := post(`{"query":"{ listUser { profile { bio } } }"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("深度 3 应 400,实际 %d", rec.Code)
 	}
@@ -335,7 +335,7 @@ func TestQueryDepthGuard(t *testing.T) {
 
 func TestComplexityAndIntrospectionGuard(t *testing.T) {
 	// spec/04:字段计数单元 + MaxQueryFields 超限 + DisableIntrospection
-	fields, introUsed := queryFieldCount(mustParse(t, `{ list_User { _id } }`))
+	fields, introUsed := queryFieldCount(mustParse(t, `{ listUser { _id } }`))
 	if fields != 2 || introUsed {
 		t.Fatalf("字段计数应为 2 且非 introspection,实际 %d/%v", fields, introUsed)
 	}
@@ -354,10 +354,10 @@ func TestComplexityAndIntrospectionGuard(t *testing.T) {
 		return rec
 	}
 
-	if rec := post(`{"query":"{ list_User { _id } }"}`); rec.Code != http.StatusOK {
+	if rec := post(`{"query":"{ listUser { _id } }"}`); rec.Code != http.StatusOK {
 		t.Fatalf("字段数 2(边界)应放行,实际 %d", rec.Code)
 	}
-	rec := post(`{"query":"{ list_User { _id name } }"}`)
+	rec := post(`{"query":"{ listUser { _id name } }"}`)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ERR_COMPLEXITY:") {
 		t.Fatalf("超字段上限应 400 + ERR_COMPLEXITY:,实际 %d %s", rec.Code, rec.Body.String())
 	}
@@ -402,16 +402,16 @@ func TestCreateListPushdown(t *testing.T) {
 	schema := buildTestSchema(t, st, Options{})
 
 	created := do(t, schema,
-		`mutation($input: JSON!) { create_User(input: $input) { _id name age } }`,
+		`mutation($input: JSON!) { createUser(input: $input) { _id name age } }`,
 		map[string]interface{}{"input": map[string]interface{}{"name": "a", "age": 1}})
-	if created.Data.(map[string]interface{})["create_User"] == nil {
+	if created.Data.(map[string]interface{})["createUser"] == nil {
 		t.Fatalf("create 未返回文档: %v", created.Data)
 	}
 
 	listed := do(t, schema,
-		`query($c: JSON, $l: Int) { list_User(condition: $c, limit: $l) { name } }`,
+		`query($c: JSON, $l: Int) { listUser(condition: $c, limit: $l) { name } }`,
 		map[string]interface{}{"c": map[string]interface{}{"name": "a"}, "l": 10})
-	rows := listed.Data.(map[string]interface{})["list_User"].([]interface{})
+	rows := listed.Data.(map[string]interface{})["listUser"].([]interface{})
 	if len(rows) != 1 {
 		t.Fatalf("list 应返回 1 条，实际 %d", len(rows))
 	}
@@ -427,24 +427,24 @@ func TestCreateListPushdown(t *testing.T) {
 func TestGetUpdateDelete(t *testing.T) {
 	st := newMockStore(t)
 	schema := buildTestSchema(t, st, Options{})
-	do(t, schema, `mutation($input: JSON!) { create_User(input: $input) { _id } }`,
+	do(t, schema, `mutation($input: JSON!) { createUser(input: $input) { _id } }`,
 		map[string]interface{}{"input": map[string]interface{}{"name": "b"}})
 
-	got := do(t, schema, `{ get_User(id: "u1") { name } }`, nil)
-	if got.Data.(map[string]interface{})["get_User"] == nil {
+	got := do(t, schema, `{ getUser(id: "u1") { name } }`, nil)
+	if got.Data.(map[string]interface{})["getUser"] == nil {
 		t.Fatalf("get 未命中: %v", got.Data)
 	}
 
 	updated := do(t, schema,
-		`mutation($id: ID!, $set: JSON!) { update_User(id: $id, set: $set) { name age } }`,
+		`mutation($id: ID!, $set: JSON!) { updateUser(id: $id, set: $set) { name age } }`,
 		map[string]interface{}{"id": "u1", "set": map[string]interface{}{"age": 2}})
-	u := updated.Data.(map[string]interface{})["update_User"].(map[string]interface{})
+	u := updated.Data.(map[string]interface{})["updateUser"].(map[string]interface{})
 	if u["age"] != 2 {
 		t.Fatalf("update 回读 age 应为 2，实际 %v", u["age"])
 	}
 
-	deleted := do(t, schema, `mutation { delete_User(id: "u1") }`, nil)
-	if deleted.Data.(map[string]interface{})["delete_User"] != true {
+	deleted := do(t, schema, `mutation { deleteUser(id: "u1") }`, nil)
+	if deleted.Data.(map[string]interface{})["deleteUser"] != true {
 		t.Fatalf("delete 应返回 true: %v", deleted.Data)
 	}
 	if rows := st.rows; len(rows) != 0 {
@@ -460,10 +460,10 @@ func TestAnnotationsAndOverride(t *testing.T) {
 	schema := buildTestSchema(t, st, Options{Schemas: []map[string]any{defnMap(t), readonly}})
 	res := graphql.Do(graphql.Params{Schema: schema, RequestString: introspectionQuery})
 	sdl := sprintIntrospection(t, res)
-	if strings.Contains(sdl, "create_AuditEvent") {
+	if strings.Contains(sdl, "createAuditEvent") {
 		t.Fatalf("readonly 模型不应出现 Mutation 面:\n%s", sdl)
 	}
-	if !strings.Contains(sdl, "get_AuditEvent") {
+	if !strings.Contains(sdl, "getAuditEvent") {
 		t.Fatalf("readonly 模型应保留 Query 面:\n%s", sdl)
 	}
 
@@ -472,7 +472,7 @@ func TestAnnotationsAndOverride(t *testing.T) {
 	_, err := Build(st2, Options{
 		Schemas: []map[string]any{defnMap(t)},
 		Overrides: map[string]graphql.FieldResolveFn{
-			"Query.list_User": func(p graphql.ResolveParams) (interface{}, error) {
+			"Query.listUser": func(p graphql.ResolveParams) (interface{}, error) {
 				return []map[string]any{{"_id": "x", "name": "override"}}, nil
 			},
 		},
@@ -483,18 +483,18 @@ func TestAnnotationsAndOverride(t *testing.T) {
 	ov := do(t, buildTestSchema(t, st2, Options{
 		Schemas: []map[string]any{defnMap(t)},
 		Overrides: map[string]graphql.FieldResolveFn{
-			"Query.list_User": func(p graphql.ResolveParams) (interface{}, error) {
+			"Query.listUser": func(p graphql.ResolveParams) (interface{}, error) {
 				return []map[string]any{{"_id": "x", "name": "override"}}, nil
 			},
 		},
-	}), `{ list_User { name } }`, nil)
-	if ov.Data.(map[string]interface{})["list_User"].([]interface{})[0].(map[string]interface{})["name"] != "override" {
+	}), `{ listUser { name } }`, nil)
+	if ov.Data.(map[string]interface{})["listUser"].([]interface{})[0].(map[string]interface{})["name"] != "override" {
 		t.Fatalf("override 未生效: %v", ov.Data)
 	}
 
 	if _, err := Build(newMockStore(t), Options{
 		Schemas:   []map[string]any{defnMap(t)},
-		Overrides: map[string]graphql.FieldResolveFn{"Query.list_Nope": func(p graphql.ResolveParams) (interface{}, error) { return nil, nil }},
+		Overrides: map[string]graphql.FieldResolveFn{"Query.listNope": func(p graphql.ResolveParams) (interface{}, error) { return nil, nil }},
 	}); err == nil || !strings.Contains(err.Error(), "未命中") {
 		t.Fatalf("未知 override 路径应报错，实际: %v", err)
 	}

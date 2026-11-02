@@ -150,7 +150,7 @@ type Options struct {
 	Resources []string
 	// Schemas 注册用 defn 列表（spec/01：go-store 不回读 defn，与 gostore.Register 共用同一份）。
 	Schemas []map[string]any
-	// Overrides spec/03 钩子 2：按 "Query.get_X" / "Mutation.create_X" 路径替换生成 resolver。
+	// Overrides spec/03 钩子 2：按 "Query.getX" / "Mutation.createX" 路径替换生成 resolver。
 	Overrides map[string]graphql.FieldResolveFn
 	// Extensions spec/03 钩子 3：向 Query/Mutation 追加自定义字段（键仅限二者）。
 	Extensions map[string]graphql.Fields
@@ -612,42 +612,42 @@ func Build(st Store, opts Options) (graphql.Schema, error) {
 			Fields:      fieldsMap(modelFields(defn), name),
 		})
 
-		queryFields["get_"+name] = &graphql.Field{
+		queryFields["get"+name] = &graphql.Field{
 			Type: modelType,
 			Args: graphql.FieldConfigArgument{"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}},
-			Resolve: resolveWithOverride("Query.get_"+name, makeGet(st, name, opts.IDField, allFields)),
+			Resolve: resolveWithOverride("Query.get"+name, makeGet(st, name, opts.IDField, allFields)),
 		}
-		queryFields["list_"+name] = &graphql.Field{
+		queryFields["list"+name] = &graphql.Field{
 			Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(modelType))),
 			Args: graphql.FieldConfigArgument{
 				"condition": &graphql.ArgumentConfig{Type: jsonScalar},
 				"sort":      &graphql.ArgumentConfig{Type: jsonScalar},
 				"limit":     &graphql.ArgumentConfig{Type: graphql.Int},
 			},
-			Resolve: resolveWithOverride("Query.list_"+name, makeList(st, name, allFields)),
+			Resolve: resolveWithOverride("Query.list"+name, makeList(st, name, allFields)),
 		}
 		readonly := false
 		if xg != nil {
 			readonly, _ = xg["readonly"].(bool)
 		}
 		if !readonly { // spec/03 钩子 1：readonly → 只出 Query
-			mutationFields["create_"+name] = &graphql.Field{
+			mutationFields["create"+name] = &graphql.Field{
 				Type: modelType,
 				Args: graphql.FieldConfigArgument{"input": &graphql.ArgumentConfig{Type: graphql.NewNonNull(jsonScalar)}},
-				Resolve: resolveWithOverride("Mutation.create_"+name, makeCreate(st, name)),
+				Resolve: resolveWithOverride("Mutation.create"+name, makeCreate(st, name)),
 			}
-			mutationFields["update_"+name] = &graphql.Field{
+			mutationFields["update"+name] = &graphql.Field{
 				Type: modelType,
 				Args: graphql.FieldConfigArgument{
 					"id":  &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)},
 					"set": &graphql.ArgumentConfig{Type: graphql.NewNonNull(jsonScalar)},
 				},
-				Resolve: resolveWithOverride("Mutation.update_"+name, makeUpdate(st, name, opts.IDField, allFields)),
+				Resolve: resolveWithOverride("Mutation.update"+name, makeUpdate(st, name, opts.IDField, allFields)),
 			}
-			mutationFields["delete_"+name] = &graphql.Field{
+			mutationFields["delete"+name] = &graphql.Field{
 				Type: graphql.NewNonNull(graphql.Boolean),
 				Args: graphql.FieldConfigArgument{"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}},
-				Resolve: resolveWithOverride("Mutation.delete_"+name, makeDelete(st, name, opts.IDField)),
+				Resolve: resolveWithOverride("Mutation.delete"+name, makeDelete(st, name, opts.IDField)),
 			}
 		}
 	}

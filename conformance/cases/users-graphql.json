@@ -11,22 +11,22 @@
   "steps": [
     {
       "op": "mutation",
-      "query": "mutation($input: JSON!) { create_User(input: $input) { _id name age } }",
+      "query": "mutation($input: JSON!) { createUser(input: $input) { _id name age } }",
       "variables": { "input": { "name": "a", "age": 1 } },
-      "expect": { "dataKeys": ["create_User"] }
+      "expect": { "dataKeys": ["createUser"] }
     },
     {
       "op": "query",
-      "query": "query($c: JSON, $l: Int) { list_User(condition: $c, limit: $l) { name } }",
+      "query": "query($c: JSON, $l: Int) { listUser(condition: $c, limit: $l) { name } }",
       "variables": { "c": { "name": "a" }, "l": 10 },
       "expect": {
-        "dataKeys": ["list_User"],
+        "dataKeys": ["listUser"],
         "gql": "User($condition:@c0,$limit:@l) { name }"
       }
     },
     {
       "op": "query",
-      "query": "{ list_User { _id } }",
+      "query": "{ listUser { _id } }",
       "variables": {},
       "expect": {
         "gql": "User($limit:@l) { _id }",
@@ -36,7 +36,7 @@
     },
     {
       "op": "query",
-      "query": "query($l: Int) { list_User(limit: $l) { _id } }",
+      "query": "query($l: Int) { listUser(limit: $l) { _id } }",
       "variables": { "l": 1001 },
       "expect": {
         "errorCodePrefix": "ERR_LIMIT:",
@@ -45,7 +45,7 @@
     },
     {
       "op": "query",
-      "query": "query($c: JSON) { list_User(condition: $c) { _id _score } }",
+      "query": "query($c: JSON) { listUser(condition: $c) { _id _score } }",
       "variables": { "c": { "name": { "$near": { "$vector": [0.1, 0.2], "$limit": 2 } } } },
       "expect": {
         "gql": "User($condition:@c0) { _id, _score }",
@@ -54,7 +54,7 @@
     },
     {
       "op": "query",
-      "query": "query($c: JSON, $l: Int) { list_User(condition: $c, limit: $l) { _id } }",
+      "query": "query($c: JSON, $l: Int) { listUser(condition: $c, limit: $l) { _id } }",
       "variables": {
         "c": { "name": { "$near": { "$vector": [0.1, 0.2], "$limit": 2 } } },
         "l": 10
@@ -66,7 +66,7 @@
     },
     {
       "op": "query",
-      "query": "query($c: JSON) { list_User(condition: $c) { _id } }",
+      "query": "query($c: JSON) { listUser(condition: $c) { _id } }",
       "variables": { "c": { "name": { "$near": { "$vector": [0.1, 0.2], "$limit": 5000 } } } },
       "expect": {
         "errorCodePrefix": "ERR_LIMIT:",
@@ -75,21 +75,21 @@
     },
     {
       "op": "query",
-      "query": "{ get_User(id: \"u1\") { name } }",
+      "query": "{ getUser(id: \"u1\") { name } }",
       "variables": {},
-      "expect": { "dataKeys": ["get_User"] }
+      "expect": { "dataKeys": ["getUser"] }
     },
     {
       "op": "mutation",
-      "query": "mutation($id: ID!, $set: JSON!) { update_User(id: $id, set: $set) { name age } }",
+      "query": "mutation($id: ID!, $set: JSON!) { updateUser(id: $id, set: $set) { name age } }",
       "variables": { "id": "u1", "set": { "age": 2 } },
-      "expect": { "dataKeys": ["update_User"] }
+      "expect": { "dataKeys": ["updateUser"] }
     },
     {
       "op": "mutation",
-      "query": "mutation { delete_User(id: \"u1\") }",
+      "query": "mutation { deleteUser(id: \"u1\") }",
       "variables": {},
-      "expect": { "dataKeys": ["delete_User"] }
+      "expect": { "dataKeys": ["deleteUser"] }
     }
   ]
 }

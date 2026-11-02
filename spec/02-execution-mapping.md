@@ -10,8 +10,8 @@
 | `sort` | `$sort:@s1` | `s1` | 非 null 才拼 |
 | `limit` | `$limit:@l` | `l` | 非 null 才拼 |
 
-- `get_X(id)` ⇒ `X($condition:@c0){<投影>}`，`c0 = {"_id": id}`，取结果首条，空则 `null`
-- `list_X(...)` ⇒ 按上表按需拼接参数头 + `{<投影>}`（`limit` 恒拼接，见下节守卫）
+- `getX(id)` ⇒ `X($condition:@c0){<投影>}`，`c0 = {"_id": id}`，取结果首条，空则 `null`
+- `listX(...)` ⇒ 按上表按需拼接参数头 + `{<投影>}`（`limit` 恒拼接，见下节守卫）
 - 主键字段名 `id_field` v0 固定 `_id`（与 store-api spec/01 一致；不改参数面）
 
 ## limit 守卫（适配层语义，2026-10 性能核实后新增）
@@ -27,9 +27,9 @@
 
 | 操作 | store 调用 | 返回 |
 |---|---|---|
-| `create_X` | `insert(X, input)` | 插入后全文档 |
-| `update_X` | `update(X, {"_id": id}, set)` 后按 selection 回读 | 回读文档（不依赖 update 返回值口径，三端一致） |
-| `delete_X` | `remove(X, {"_id": id})` | `true`（失败经错误通道，见 04） |
+| `createX` | `insert(X, input)` | 插入后全文档 |
+| `updateX` | `update(X, {"_id": id}, set)` 后按 selection 回读 | 回读文档（不依赖 update 返回值口径，三端一致） |
+| `deleteX` | `remove(X, {"_id": id})` | `true`（失败经错误通道，见 04） |
 
 ## selection → 投影串（node / py 精确下推）
 

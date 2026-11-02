@@ -9,7 +9,7 @@
   "name": "users-graphql",
   "schema": { "name": "User", "fields": {"_id": {"type": "string"}, "name": {"type": "string"}, "age": {"type": "int"}} },
   "steps": [
-    { "op": "mutation", "query": "mutation($input: JSON!){ create_User(input: $input){ _id name age } }", "variables": {"input": {"name": "a", "age": 1}}, "expect": {"dataKeys": ["create_User"]} }
+    { "op": "mutation", "query": "mutation($input: JSON!){ createUser(input: $input){ _id name age } }", "variables": {"input": {"name": "a", "age": 1}}, "expect": {"dataKeys": ["createUser"]} }
   ]
 }
 ```

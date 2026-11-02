@@ -56,33 +56,33 @@ async def _run_case():
 
         # create:真实 core 生成 _id + timestamps,真实落库
         created = await run(
-            "mutation($input: JSON!) { create_User(input: $input) { _id name age } }",
+            "mutation($input: JSON!) { createUser(input: $input) { _id name age } }",
             {"input": {"name": "alice", "age": 30}},
         )
-        real_id = created["create_User"]["_id"]
+        real_id = created["createUser"]["_id"]
         assert real_id.startswith("u"), f"应返回真实生成的 u 前缀 _id,实际 {real_id}"
 
         # list:投影下推串经真实 core 解析并走 SQLite
-        listed = await run("{ list_User { _id name } }")
-        assert len(listed["list_User"]) == 1
-        assert listed["list_User"][0]["name"] == "alice"
+        listed = await run("{ listUser { _id name } }")
+        assert len(listed["listUser"]) == 1
+        assert listed["listUser"][0]["name"] == "alice"
 
         # get:条件投影
-        got = await run(f'{{ get_User(id: "{real_id}") {{ name age }} }}')
-        assert got["get_User"] == {"name": "alice", "age": 30}
+        got = await run(f'{{ getUser(id: "{real_id}") {{ name age }} }}')
+        assert got["getUser"] == {"name": "alice", "age": 30}
 
         # update:写入 + 回读
         updated = await run(
-            "mutation($id: ID!, $set: JSON!) { update_User(id: $id, set: $set) { name age } }",
+            "mutation($id: ID!, $set: JSON!) { updateUser(id: $id, set: $set) { name age } }",
             {"id": real_id, "set": {"age": 31}},
         )
-        assert updated["update_User"]["age"] == 31
+        assert updated["updateUser"]["age"] == 31
 
         # delete:归档编排(deletedCount + archivedCount)后列表为空
-        deleted = await run(f'mutation {{ delete_User(id: "{real_id}") }}')
-        assert deleted["delete_User"] is True
-        after = await run("{ list_User { _id } }")
-        assert after["list_User"] == []
+        deleted = await run(f'mutation {{ deleteUser(id: "{real_id}") }}')
+        assert deleted["deleteUser"] is True
+        after = await run("{ listUser { _id } }")
+        assert after["listUser"] == []
 
 
 def test_e2e_real_sqlite():

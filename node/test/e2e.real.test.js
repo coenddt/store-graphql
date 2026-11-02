@@ -70,36 +70,36 @@ test(
   // create:真实 core 生成 _id、真实落库
   const created = await run(
     schema,
-    'mutation($input: JSON!) { create_User(input: $input) { _id name age } }',
+    'mutation($input: JSON!) { createUser(input: $input) { _id name age } }',
     { input: { name: 'alice', age: 30 } }
   );
-  assert.ok(created.create_User._id, '应返回真实生成的 _id');
-  assert.equal(created.create_User.name, 'alice');
-  const realId = created.create_User._id;
+  assert.ok(created.createUser._id, '应返回真实生成的 _id');
+  assert.equal(created.createUser.name, 'alice');
+  const realId = created.createUser._id;
 
   // list:投影下推串经真实 core 解析并走 SQLite
-  const listed = await run(schema, '{ list_User { _id name } }');
-  assert.equal(listed.list_User.length, 1);
-  assert.equal(listed.list_User[0].name, 'alice');
+  const listed = await run(schema, '{ listUser { _id name } }');
+  assert.equal(listed.listUser.length, 1);
+  assert.equal(listed.listUser[0].name, 'alice');
 
   // get:条件投影
-  const got = await run(schema, `{ get_User(id: "${realId}") { name age } }`);
-  assert.equal(got.get_User.name, 'alice');
-  assert.equal(got.get_User.age, 30);
+  const got = await run(schema, `{ getUser(id: "${realId}") { name age } }`);
+  assert.equal(got.getUser.name, 'alice');
+  assert.equal(got.getUser.age, 30);
 
   // update:写入 + 回读
   const updated = await run(
     schema,
-    'mutation($id: ID!, $set: JSON!) { update_User(id: $id, set: $set) { name age } }',
+    'mutation($id: ID!, $set: JSON!) { updateUser(id: $id, set: $set) { name age } }',
     { id: realId, set: { age: 31 } }
   );
-  assert.equal(updated.update_User.age, 31);
+  assert.equal(updated.updateUser.age, 31);
 
   // delete:真实删除后列表为空
-  const del = await run(schema, `mutation { delete_User(id: "${realId}") }`);
-  assert.equal(del.delete_User, true);
-  const after = await run(schema, '{ list_User { _id } }');
-  assert.equal(after.list_User.length, 0);
+  const del = await run(schema, `mutation { deleteUser(id: "${realId}") }`);
+  assert.equal(del.deleteUser, true);
+  const after = await run(schema, '{ listUser { _id } }');
+  assert.equal(after.listUser.length, 0);
 
   db.close();
 });

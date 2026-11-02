@@ -106,15 +106,15 @@ def test_schema_filters_reserved_builtin_models():
     assert schema.get_type("User") is not None
     assert schema.get_type("__workflowRun") is None
     assert schema.get_type("__feedback") is None
-    assert "list___workflowRun" not in schema.get_type("Query").fields
+    assert "list_workflowRun" not in schema.get_type("Query").fields
 
 
 def test_sdl_generation():
     sdl = export_sdl(build_graphql_schema(MockStore()))
     assert "type User {" in sdl
-    assert "get_User(id: ID!): User" in sdl
-    assert "list_User(condition: JSON, sort: JSON, limit: Int): [User!]!" in sdl
-    assert "create_User(input: JSON!): User" in sdl
+    assert "getUser(id: ID!): User" in sdl
+    assert "listUser(condition: JSON, sort: JSON, limit: Int): [User!]!" in sdl
+    assert "createUser(input: JSON!): User" in sdl
     assert "profile: User_profile" in sdl
     # description 管道（spec/05）：模型/字段/嵌套类型三层透传
     assert '"""用户表：平台账号主档"""' in sdl
@@ -129,21 +129,21 @@ def test_create_list_pushdown():
     created = asyncio.run(
         run(
             schema,
-            "mutation($input: JSON!) { create_User(input: $input) { _id name age } }",
+            "mutation($input: JSON!) { createUser(input: $input) { _id name age } }",
             {"input": {"name": "a", "age": 1}},
         )
     )
-    assert created["create_User"]["name"] == "a"
+    assert created["createUser"]["name"] == "a"
 
     listed = asyncio.run(
         run(
             schema,
-            "query($c: JSON, $l: Int) { list_User(condition: $c, limit: $l) { name profile { bio } } }",
+            "query($c: JSON, $l: Int) { listUser(condition: $c, limit: $l) { name profile { bio } } }",
             {"c": {"name": "a"}, "l": 10},
         )
     )
-    assert len(listed["list_User"]) == 1
-    assert listed["list_User"][0]["name"] == "a"
+    assert len(listed["listUser"]) == 1
+    assert listed["listUser"][0]["name"] == "a"
 
     # 投影下推断言:selection 编入 GQL 串,参数按需拼接(spec/02 映射表)
     last = store.gql_log[-1]
@@ -155,37 +155,37 @@ def test_get_update_delete():
     store = MockStore()
     schema = build_graphql_schema(store)
     asyncio.run(
-        run(schema, "mutation($i: JSON!) { create_User(input: $i) { _id } }", {"i": {"name": "b"}})
+        run(schema, "mutation($i: JSON!) { createUser(input: $i) { _id } }", {"i": {"name": "b"}})
     )
 
-    got = asyncio.run(run(schema, '{ get_User(id: "u1") { name } }'))
-    assert got["get_User"]["name"] == "b"
+    got = asyncio.run(run(schema, '{ getUser(id: "u1") { name } }'))
+    assert got["getUser"]["name"] == "b"
 
     updated = asyncio.run(
         run(
             schema,
-            "mutation($id: ID!, $set: JSON!) { update_User(id: $id, set: $set) { name age } }",
+            "mutation($id: ID!, $set: JSON!) { updateUser(id: $id, set: $set) { name age } }",
             {"id": "u1", "set": {"age": 2}},
         )
     )
-    assert updated["update_User"]["age"] == 2
+    assert updated["updateUser"]["age"] == 2
 
-    deleted = asyncio.run(run(schema, 'mutation { delete_User(id: "u1") }'))
-    assert deleted["delete_User"] is True
-    listed = asyncio.run(run(schema, "{ list_User { _id } }"))
-    assert listed["list_User"] == []
+    deleted = asyncio.run(run(schema, 'mutation { deleteUser(id: "u1") }'))
+    assert deleted["deleteUser"] is True
+    listed = asyncio.run(run(schema, "{ listUser { _id } }"))
+    assert listed["listUser"] == []
 
 
 def test_skip_and_fragment():
     store = MockStore()
     schema = build_graphql_schema(store)
     asyncio.run(
-        run(schema, "mutation($i: JSON!) { create_User(input: $i) { _id } }", {"i": {"name": "c"}})
+        run(schema, "mutation($i: JSON!) { createUser(input: $i) { _id } }", {"i": {"name": "c"}})
     )
     asyncio.run(
         run(
             schema,
-            "query($noAge: Boolean!) { list_User { name age @skip(if: $noAge) ...U } }"
+            "query($noAge: Boolean!) { listUser { name age @skip(if: $noAge) ...U } }"
             "fragment U on User { name }",
             {"noAge": True},
         )
@@ -197,19 +197,19 @@ def test_limit_guard():
     # spec/02:缺省 50 / 超限 ERR_LIMIT: / 边界 1000
     store = MockStore()
     schema = build_graphql_schema(store)
-    asyncio.run(run(schema, "{ list_User { _id } }"))
+    asyncio.run(run(schema, "{ listUser { _id } }"))
     last = store.gql_log[-1]
     assert last["gql"] == "User($limit:@l) { _id }"
     assert last["params"]["l"] == 50
 
-    asyncio.run(run(schema, "query($l: Int) { list_User(limit: $l) { _id } }", {"l": 1000}))
+    asyncio.run(run(schema, "query($l: Int) { listUser(limit: $l) { _id } }", {"l": 1000}))
     assert store.gql_log[-1]["params"]["l"] == 1000
 
     result = asyncio.run(
-        graphql(schema, "query($l: Int) { list_User(limit: $l) { _id } }", variable_values={"l": 1001})
+        graphql(schema, "query($l: Int) { listUser(limit: $l) { _id } }", variable_values={"l": 1001})
     )
     assert result.errors and "ERR_LIMIT:" in result.errors[0].message
-    assert result.data is None  # list_User 非空 ⇒ 错误冒泡至根,data 整体为 None
+    assert result.data is None  # listUser 非空 ⇒ 错误冒泡至根,data 整体为 None
 
 
 def test_annotations_hidden_readonly():
@@ -220,8 +220,8 @@ def test_annotations_hidden_readonly():
     store.get = lambda n: {"User": DEFN, "SecretLog": hidden, "AuditEvent": readonly}[n]
     sdl = export_sdl(build_graphql_schema(store))
     assert "SecretLog" not in sdl
-    assert "get_AuditEvent" in sdl
-    assert "create_AuditEvent" not in sdl
+    assert "getAuditEvent" in sdl
+    assert "createAuditEvent" not in sdl
 
 
 def test_graphiql_page():
@@ -281,19 +281,19 @@ def test_query_depth_guard():
     deep = "{ " + "a { " * 10 + "x " + "}" * 10 + " }"
     assert MAX_QUERY_DEPTH == 10
     assert query_depth(parse(deep)) == 11
-    assert query_depth(parse("{ list_User { _id } }")) == 2
+    assert query_depth(parse("{ listUser { _id } }")) == 2
     # fragment 深度计入(非环)+ 环引用给有限值不崩
-    assert query_depth(parse("query { ...A } fragment A on Query { list_User { _id } }")) == 2
-    assert query_depth(parse("query { ...A } fragment A on Query { list_User { ...A } }")) == 1
+    assert query_depth(parse("query { ...A } fragment A on Query { listUser { _id } }")) == 2
+    assert query_depth(parse("query { ...A } fragment A on Query { listUser { ...A } }")) == 1
 
     from fastapi.testclient import TestClient
 
     from store_graphql import create_app
 
     client = TestClient(create_app(MockStore(), max_query_depth=2))
-    ok = client.post("/graphql", json={"query": "{ list_User { _id } }"})
+    ok = client.post("/graphql", json={"query": "{ listUser { _id } }"})
     assert ok.status_code == 200
-    deep3 = client.post("/graphql", json={"query": "{ list_User { profile { bio } } }"})
+    deep3 = client.post("/graphql", json={"query": "{ listUser { profile { bio } } }"})
     assert deep3.status_code == 400
     assert "ERR_DEPTH:" in deep3.json()["errors"][0]["message"]
 
@@ -304,7 +304,7 @@ def test_complexity_and_introspection_guard():
 
     from store_graphql.adapter import query_field_count
 
-    assert query_field_count(parse("{ list_User { _id } }"))["fields"] == 2
+    assert query_field_count(parse("{ listUser { _id } }"))["fields"] == 2
     assert query_field_count(parse("{ __schema { queryType { name } } }"))["introspection_used"] is True
 
     from fastapi.testclient import TestClient
@@ -314,8 +314,8 @@ def test_complexity_and_introspection_guard():
     client = TestClient(create_app(MockStore(), max_query_fields=2, introspection=False))
     post = lambda q: client.post("/graphql", json={"query": q})  # noqa: E731
 
-    assert post("{ list_User { _id } }").status_code == 200
-    over = post("{ list_User { _id name } }")
+    assert post("{ listUser { _id } }").status_code == 200
+    over = post("{ listUser { _id name } }")
     assert over.status_code == 400 and "ERR_COMPLEXITY:" in over.json()["errors"][0]["message"]
     assert post("{ __typename }").status_code == 200
     intro = post("{ __schema { queryType { name } } }")
@@ -330,15 +330,15 @@ def test_override_and_extend():
 
     schema = build_graphql_schema(
         store,
-        overrides={"Query.list_User": override_list},
+        overrides={"Query.listUser": override_list},
         extensions={"Query": {"ping": GraphQLField(GraphQLBoolean, resolve=lambda *_a: True)}},
     )
-    data = asyncio.run(run(schema, "{ list_User { name } ping }"))
-    assert data["list_User"][0]["name"] == "override"
+    data = asyncio.run(run(schema, "{ listUser { name } ping }"))
+    assert data["listUser"][0]["name"] == "override"
     assert data["ping"] is True
 
     with pytest.raises(ValueError, match="未命中"):
-        build_graphql_schema(store, overrides={"Query.list_Nope": override_list})
+        build_graphql_schema(store, overrides={"Query.listNope": override_list})
 
 
 # ── R2-04：policy_provider 请求入口作用域化（与 store-api/py/tests 同构，双端 parity）──
@@ -392,14 +392,14 @@ def test_policy_provider_guard_and_require_context():
         return {"requireContext": True}
 
     client = TestClient(create_app(store, policy_provider=policy))
-    denied = client.post("/graphql", json={"query": "{ list_User { _id } }"})
+    denied = client.post("/graphql", json={"query": "{ listUser { _id } }"})
     assert seen == [None]  # policy_provider 入参 = 已解析 ctx（无 context_provider ⇒ None）
     assert denied.json()["data"] is None
     assert denied.json()["errors"][0]["message"].startswith("ERR_NO_CONTEXT")
 
     # ② 注入返回 None ⇒ 无视图作用域（current_scope() 为 None）→ 行为同现状
     lax = TestClient(create_app(store, policy_provider=lambda ctx: None))
-    ok = lax.post("/graphql", json={"query": "{ list_User { _id } }"})
+    ok = lax.post("/graphql", json={"query": "{ listUser { _id } }"})
     assert ok.status_code == 200
     assert "errors" not in ok.json()
 
@@ -440,8 +440,8 @@ def test_policy_provider_profile_view_and_ctx_reuse():
     client = TestClient(
         create_app(store, context_provider=context_provider, policy_provider=policy)
     )
-    res = client.post("/graphql", json={"query": "{ list_User { _id name } }"})
+    res = client.post("/graphql", json={"query": "{ listUser { _id name } }"})
     assert res.status_code == 200
-    assert res.json()["data"]["list_User"] == [{"_id": "r1", "name": "redacted"}]
+    assert res.json()["data"]["listUser"] == [{"_id": "r1", "name": "redacted"}]
     # 单请求 context_provider 恰好解析一次（handler 层已解析值复用，禁二次调用）
     assert len(ctx_calls) == 1

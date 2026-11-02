@@ -23,7 +23,7 @@ defn 上的 `x-graphql` 键（规则见 spec/01）：
 // node
 buildGraphQLSchema(store, {
   overrides: {
-    'Query.list_User': async (src, args, ctx, info) => myCustomList(args, info),
+    'Query.listUser': async (src, args, ctx, info) => myCustomList(args, info),
   },
 })
 ```
@@ -31,7 +31,7 @@ buildGraphQLSchema(store, {
 ```python
 # py
 build_graphql_schema(store, overrides={
-    "Query.list_User": my_custom_list,
+    "Query.listUser": my_custom_list,
 })
 ```
 
@@ -39,7 +39,7 @@ build_graphql_schema(store, overrides={
 // go
 storegraphql.Build(st, storegraphql.Options{
     Overrides: map[string]graphql.FieldResolveFn{
-        "Query.list_User": func(p graphql.ResolveParams) (interface{}, error) { return myCustomList(p) },
+        "Query.listUser": func(p graphql.ResolveParams) (interface{}, error) { return myCustomList(p) },
     },
 })
 ```

@@ -419,43 +419,43 @@ def build_graphql_schema(
             fields=lambda d=defn, n=name: _map_fields(_model_fields(d), n),
         )
 
-        query_fields[f"get_{name}"] = GraphQLField(
+        query_fields[f"get{name}"] = GraphQLField(
             model_type,
             args={"id": GraphQLArgument(GraphQLNonNull(GraphQLID))},
-            resolve=resolve_with_override(f"Query.get_{name}", _make_get(store, name, id_field)),
+            resolve=resolve_with_override(f"Query.get{name}", _make_get(store, name, id_field)),
         )
-        query_fields[f"list_{name}"] = GraphQLField(
+        query_fields[f"list{name}"] = GraphQLField(
             GraphQLNonNull(GraphQLList(GraphQLNonNull(model_type))),
             args={
                 "condition": GraphQLArgument(GraphQLJSON),
                 "sort": GraphQLArgument(GraphQLJSON),
                 "limit": GraphQLArgument(GraphQLInt),
             },
-            resolve=resolve_with_override(f"Query.list_{name}", _make_list(store, name)),
+            resolve=resolve_with_override(f"Query.list{name}", _make_list(store, name)),
         )
         if not xg.get("readonly"):  # spec/03 钩子 1：模型级 readonly → 只出 Query
-            mutation_fields[f"create_{name}"] = GraphQLField(
+            mutation_fields[f"create{name}"] = GraphQLField(
                 model_type,
                 args={"input": GraphQLArgument(GraphQLNonNull(GraphQLJSON))},
                 resolve=resolve_with_override(
-                    f"Mutation.create_{name}", _make_create(store, name)
+                    f"Mutation.create{name}", _make_create(store, name)
                 ),
             )
-            mutation_fields[f"update_{name}"] = GraphQLField(
+            mutation_fields[f"update{name}"] = GraphQLField(
                 model_type,
                 args={
                     "id": GraphQLArgument(GraphQLNonNull(GraphQLID)),
                     "set": GraphQLArgument(GraphQLNonNull(GraphQLJSON)),
                 },
                 resolve=resolve_with_override(
-                    f"Mutation.update_{name}", _make_update(store, name, id_field)
+                    f"Mutation.update{name}", _make_update(store, name, id_field)
                 ),
             )
-            mutation_fields[f"delete_{name}"] = GraphQLField(
+            mutation_fields[f"delete{name}"] = GraphQLField(
                 GraphQLNonNull(GraphQLBoolean),
                 args={"id": GraphQLArgument(GraphQLNonNull(GraphQLID))},
                 resolve=resolve_with_override(
-                    f"Mutation.delete_{name}", _make_delete(store, name, id_field)
+                    f"Mutation.delete{name}", _make_delete(store, name, id_field)
                 ),
             )
 

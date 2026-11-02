@@ -74,56 +74,56 @@ func TestE2ERealSQLite(t *testing.T) {
 	}
 
 	// create:真实 core 生成 _id、真实落库(JSON 一律走 variables,spec/02:go 端内联字面量被拒)
-	created := do(`mutation($input: JSON!) { create_User(input: $input) { _id name age } }`,
+	created := do(`mutation($input: JSON!) { createUser(input: $input) { _id name age } }`,
 		map[string]interface{}{"input": map[string]interface{}{"name": "alice", "age": 30}})
 	if created.HasErrors() {
 		t.Fatalf("create 失败: %v", created.Errors)
 	}
-	doc := created.Data.(map[string]interface{})["create_User"].(map[string]interface{})
+	doc := created.Data.(map[string]interface{})["createUser"].(map[string]interface{})
 	realID, _ := doc["_id"].(string)
 	if !strings.HasPrefix(realID, "u") {
 		t.Fatalf("应返回 u 前缀真实 _id,实际 %v", doc["_id"])
 	}
 
 	// list:投影下推串经真实 core 解析并走 SQLite
-	listed := do(`{ list_User { _id name } }`, nil)
+	listed := do(`{ listUser { _id name } }`, nil)
 	if listed.HasErrors() {
 		t.Fatalf("list 失败: %v", listed.Errors)
 	}
-	rows := listed.Data.(map[string]interface{})["list_User"].([]interface{})
+	rows := listed.Data.(map[string]interface{})["listUser"].([]interface{})
 	if len(rows) != 1 || rows[0].(map[string]interface{})["name"] != "alice" {
 		t.Fatalf("list 应命中 1 行 alice,实际 %v", rows)
 	}
 
 	// get:条件投影
-	got := do(fmt.Sprintf(`{ get_User(id: %q) { name age } }`, realID), nil)
+	got := do(fmt.Sprintf(`{ getUser(id: %q) { name age } }`, realID), nil)
 	if got.HasErrors() {
 		t.Fatalf("get 失败: %v", got.Errors)
 	}
-	g := got.Data.(map[string]interface{})["get_User"].(map[string]interface{})
+	g := got.Data.(map[string]interface{})["getUser"].(map[string]interface{})
 	if g["name"] != "alice" || !numEq(g["age"], 30) {
 		t.Fatalf("get 回读不符: %v", g)
 	}
 
 	// update:写入 + 回读
-	updated := do(`mutation($id: ID!, $set: JSON!) { update_User(id: $id, set: $set) { name age } }`,
+	updated := do(`mutation($id: ID!, $set: JSON!) { updateUser(id: $id, set: $set) { name age } }`,
 		map[string]interface{}{"id": realID, "set": map[string]interface{}{"age": 31}})
 	if updated.HasErrors() {
 		t.Fatalf("update 失败: %v", updated.Errors)
 	}
-	u := updated.Data.(map[string]interface{})["update_User"].(map[string]interface{})
+	u := updated.Data.(map[string]interface{})["updateUser"].(map[string]interface{})
 	if u["age"] != float64(31) && !numEq(u["age"], 31) {
 		t.Fatalf("update 回读不符: %v", u)
 	}
 
 	// delete:归档编排后列表为空
-	deleted := do(`mutation($id: ID!) { delete_User(id: $id) }`,
+	deleted := do(`mutation($id: ID!) { deleteUser(id: $id) }`,
 		map[string]interface{}{"id": realID})
 	if deleted.HasErrors() {
 		t.Fatalf("delete 失败: %v", deleted.Errors)
 	}
-	after := do(`{ list_User { _id } }`, nil)
-	rowsAfter := after.Data.(map[string]interface{})["list_User"].([]interface{})
+	after := do(`{ listUser { _id } }`, nil)
+	rowsAfter := after.Data.(map[string]interface{})["listUser"].([]interface{})
 	if len(rowsAfter) != 0 {
 		t.Fatalf("delete 后应为空,实际 %v", rowsAfter)
 	}

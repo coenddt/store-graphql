@@ -34,5 +34,5 @@
 
 ## v0 范围与明确不支持项
 
-- Query：`get_X` / `list_X`；Mutation：`create_X` / `update_X` / `delete_X`
-- **不支持**：subscription（store 无订阅语义）；`count_X` 聚合根、输出别名（alias）、`skip` 分页偏移——均待 core 侧语义核实后 v1 收编（见 01/02 的「待核实」）
+- Query：`getX` / `listX`；Mutation：`createX` / `updateX` / `deleteX`
+- **不支持**：subscription（store 无订阅语义）；`countX` 聚合根、输出别名（alias）、`skip` 分页偏移——均待 core 侧语义核实后 v1 收编（见 01/02 的「待核实」）

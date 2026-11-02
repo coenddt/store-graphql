@@ -357,38 +357,38 @@ function buildGraphQLSchema(store, opts = {}) {
       description: defn.description, // spec/05
       fields: () => mapFields(modelFields(defn), name),
     });
-    queryFields[`get_${name}`] = {
+    queryFields[`get${name}`] = {
       type: modelType,
       args: { id: { type: new GraphQLNonNull(GraphQLID) } },
-      resolve: resolveWithOverride(`Query.get_${name}`, makeGet(store, name, idField)),
+      resolve: resolveWithOverride(`Query.get${name}`, makeGet(store, name, idField)),
     };
-    queryFields[`list_${name}`] = {
+    queryFields[`list${name}`] = {
       type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(modelType))),
       args: {
         condition: { type: GraphQLJSON },
         sort: { type: GraphQLJSON },
         limit: { type: GraphQLInt },
       },
-      resolve: resolveWithOverride(`Query.list_${name}`, makeList(store, name)),
+      resolve: resolveWithOverride(`Query.list${name}`, makeList(store, name)),
     };
     if (!xg.readonly) { // spec/03 钩子 1：模型级 readonly → 只出 Query
-      mutationFields[`create_${name}`] = {
+      mutationFields[`create${name}`] = {
         type: modelType,
         args: { input: { type: new GraphQLNonNull(GraphQLJSON) } },
-        resolve: resolveWithOverride(`Mutation.create_${name}`, makeCreate(store, name)),
+        resolve: resolveWithOverride(`Mutation.create${name}`, makeCreate(store, name)),
       };
-      mutationFields[`update_${name}`] = {
+      mutationFields[`update${name}`] = {
         type: modelType,
         args: {
           id: { type: new GraphQLNonNull(GraphQLID) },
           set: { type: new GraphQLNonNull(GraphQLJSON) },
         },
-        resolve: resolveWithOverride(`Mutation.update_${name}`, makeUpdate(store, name, idField)),
+        resolve: resolveWithOverride(`Mutation.update${name}`, makeUpdate(store, name, idField)),
       };
-      mutationFields[`delete_${name}`] = {
+      mutationFields[`delete${name}`] = {
         type: new GraphQLNonNull(GraphQLBoolean),
         args: { id: { type: new GraphQLNonNull(GraphQLID) } },
-        resolve: resolveWithOverride(`Mutation.delete_${name}`, makeDelete(store, name, idField)),
+        resolve: resolveWithOverride(`Mutation.delete${name}`, makeDelete(store, name, idField)),
       };
     }
   }

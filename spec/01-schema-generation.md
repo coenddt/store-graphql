@@ -40,20 +40,20 @@
 type X { _id: ID!, ...fields, ...computes }
 
 type Query {
-  get_X(id: ID!): X
-  list_X(condition: JSON, sort: JSON, limit: Int): [X!]!
+  getX(id: ID!): X
+  listX(condition: JSON, sort: JSON, limit: Int): [X!]!
 }
 
 type Mutation {
-  create_X(input: JSON!): X
-  update_X(id: ID!, set: JSON!): X
-  delete_X(id: ID!): Boolean!
+  createX(input: JSON!): X
+  updateX(id: ID!, set: JSON!): X
+  deleteX(id: ID!): Boolean!
 }
 ```
 
 - 参数三键 `$condition / $sort / $limit` 与现有 GQL 口径一致（出处：`py-store/llms.txt` 用例 `Model($condition:@c0,$sort:@s1,$limit:@l)`；`nodejs-store/src/index.js` 用法注释）
-- **待核实（v1）**：偏移分页（`$skip`/`$page`）在 core 的真实参数名；核实前 `list_X` 不提供 offset 参数（宁缺毋滥，不发明语义）
-- **待核实（v1）**：`count_X` 走 `QueryWithCount`（go 已有，`go-store/store.go:200`）需要 node/py 对应口径；核实前不生成
+- **待核实（v1）**：偏移分页（`$skip`/`$page`）在 core 的真实参数名；核实前 `listX` 不提供 offset 参数（宁缺毋滥，不发明语义）
+- **待核实（v1）**：`countX` 走 `QueryWithCount`（go 已有，`go-store/store.go:200`）需要 node/py 对应口径；核实前不生成
 
 ## 模型级注记（声明式自定义，spec/03 的第 1 钩子）
 

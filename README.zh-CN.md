@@ -62,8 +62,8 @@ schema 自动生成**标准 GraphQL API** 的三端适配层。
 
 1. **生成源唯一**——store 的纯 JSON schema（`defn`），与 REST 皮肤 `store-api`
    *同一*来源。适配层不引入第二套类型系统。
-2. **生成面**——对每个模型 `X`，在 `Query` 上生成 `get_X` / `list_X`，在 `Mutation` 上生成
-   `create_X` / `update_X` / `delete_X`。字段类型由 defn 反射（嵌套 `object` 向下钻取为嵌套
+2. **生成面**——对每个模型 `X`，在 `Query` 上生成 `getX` / `listX`，在 `Mutation` 上生成
+   `createX` / `updateX` / `deleteX`。字段类型由 defn 反射（嵌套 `object` 向下钻取为嵌套
    对象类型；动态结构走 `JSON` 标量）。
 3. **投影下推**——GraphQL selection 被序列化回既有 GQL 投影串，于是**一次 `store.query`
    取回整棵树**。关系子查询、聚合、计算列、RBAC、方言路由全部继承自 core。子字段解析器
@@ -102,7 +102,7 @@ import 具体 store 类型）：
 **不适用场景**
 
 - 你需要实时推送语义（subscription）——store 没有，本皮肤也不会发明。
-- 你需要 offset/skip 分页、输出别名，或聚合根 `count_X`——全部推迟到 v1（见
+- 你需要 offset/skip 分页、输出别名，或聚合根 `countX`——全部推迟到 v1（见
   [v0 范围](#v0-范围与明确不支持项)）。
 - 你需要写密集的 GraphQL 批处理——批处理关闭（每请求一份 document）。
 - 你想让适配层掌管认证——它不掌管；你注入上下文 provider，其余交给 store 的 RBAC。
@@ -224,7 +224,7 @@ async def main():
 
         # 或者完全跳过 FastAPI，自行执行：
         # from graphql import graphql
-        # result = await graphql(schema, "{ list_User { _id name } }")
+        # result = await graphql(schema, "{ listUser { _id name } }")
 
 asyncio.run(main())
 ```
@@ -288,14 +288,14 @@ log.Fatal(http.ListenAndServe(":4000", mux))
 type X { _id: ID!, ...fields, ...computes }
 
 type Query {
-  get_X(id: ID!): X
-  list_X(condition: JSON, sort: JSON, limit: Int): [X!]!
+  getX(id: ID!): X
+  listX(condition: JSON, sort: JSON, limit: Int): [X!]!
 }
 
 type Mutation {
-  create_X(input: JSON!): X
-  update_X(id: ID!, set: JSON!): X
-  delete_X(id: ID!): Boolean!
+  createX(input: JSON!): X
+  updateX(id: ID!, set: JSON!): X
+  deleteX(id: ID!): Boolean!
 }
 ```
 
@@ -317,14 +317,14 @@ type User_profile {
 }
 
 type Query {
-  get_User(id: ID!): User
-  list_User(condition: JSON, sort: JSON, limit: Int): [User!]!
+  getUser(id: ID!): User
+  listUser(condition: JSON, sort: JSON, limit: Int): [User!]!
 }
 
 type Mutation {
-  create_User(input: JSON!): User
-  update_User(id: ID!, set: JSON!): User
-  delete_User(id: ID!): Boolean!
+  createUser(input: JSON!): User
+  updateUser(id: ID!, set: JSON!): User
+  deleteUser(id: ID!): Boolean!
 }
 ```
 
@@ -340,7 +340,7 @@ graphql-core 在 `parseLiteral` 抛错；Go 的 `ParseLiteral` 返回 `nil`，�
 （`print_schema`）。Go：v0 无离线导出器；SDL 由 introspection 定义。
 
 > **待核实（v1）：** offset 分页的真实 core 参数名（`$skip` / `$page`）——未确认前
-> `list_X` 不暴露 offset 参数（宁可不写，也不发明）。`count_X` 聚合根（`QueryWithCount`，
+> `listX` 不暴露 offset 参数（宁可不写，也不发明）。`countX` 聚合根（`QueryWithCount`，
 > Go 端已有）需要 Node/Python 等价物——未确认前不生成。
 
 ## 执行映射
@@ -358,9 +358,9 @@ graphql-core 在 `parseLiteral` 抛错；Go 的 `ParseLiteral` 返回 `nil`，�
 | `sort` | `$sort:@s1` | `s1` | 仅当非 null |
 | `limit` | `$limit:@l` | `l` | 总是（见 limit 守卫） |
 
-- `get_X(id)` ⇒ `X($condition:@c0) { <projection> }`，其中 `c0 = {"_id": id}`；返回首行，
+- `getX(id)` ⇒ `X($condition:@c0) { <projection> }`，其中 `c0 = {"_id": id}`；返回首行，
   为空则 `null`。
-- `list_X(...)` ⇒ 上述参数头（按需）+ `{ <projection> }`。
+- `listX(...)` ⇒ 上述参数头（按需）+ `{ <projection> }`。
 - 主键字段名 `id_field` 在 v0 固定为 `_id`（与 `store-api spec/01` 一致；参数面不变）。
 
 **limit 守卫（适配层语义）。** core 的行数封顶（`clamp_t2q_limit` / `force_t2q_limit`）仅对
@@ -378,9 +378,9 @@ graphql-core 在 `parseLiteral` 抛错；Go 的 `ParseLiteral` 返回 `nil`，�
 
 | 操作 | store 调用 | 返回 |
 |---|---|---|
-| `create_X` | `insert(X, input)` | 插入后的完整文档 |
-| `update_X` | `update(X, {"_id": id}, set)`，随后按 selection 回读 | 回读文档（不依赖 `update` 的返回形状；三端一致） |
-| `delete_X` | `remove(X, {"_id": id})` | `true`（失败走错误通道） |
+| `createX` | `insert(X, input)` | 插入后的完整文档 |
+| `updateX` | `update(X, {"_id": id}, set)`，随后按 selection 回读 | 回读文档（不依赖 `update` 的返回形状；三端一致） |
+| `deleteX` | `remove(X, {"_id": id})` | `true`（失败走错误通道） |
 
 **Selection → 投影串**（Node / Python 做精确下推）：
 
@@ -392,7 +392,7 @@ graphql-core 在 `parseLiteral` 抛错；Go 的 `ParseLiteral` 返回 `nil`，�
    绕过了执行器的指令过滤，故须自己求值）。
 5. 空投影兜底 ⇒ 序列化结果为空时回退到 `_id`，保证 GQL 串有效。
 
-**分页。** 无 offset/skip 分页、无游标（`$skip` / `$page` 是 v1 的「待核实」项）。`list_X`
+**分页。** 无 offset/skip 分页、无游标（`$skip` / `$page` 是 v1 的「待核实」项）。`listX`
 受 `limit` 约束（缺省 50，硬上限 1000）。
 
 **Go v0 差异。** 投影序列化直接读 `ResolveParams.Info.FieldASTs`；未实现 fragment 展开
@@ -427,21 +427,21 @@ graphql-core 在 `parseLiteral` 抛错；Go 的 `ParseLiteral` 返回 `nil`，�
 // Node
 buildGraphQLSchema(store, {
   overrides: {
-    'Query.list_User': async (src, args, ctx, info) => myCustomList(args, info),
+    'Query.listUser': async (src, args, ctx, info) => myCustomList(args, info),
   },
 });
 ```
 
 ```python
 # Python
-build_graphql_schema(store, overrides={"Query.list_User": my_custom_list})
+build_graphql_schema(store, overrides={"Query.listUser": my_custom_list})
 ```
 
 ```go
 // Go
 storegraphql.Build(st, storegraphql.Options{
     Overrides: map[string]graphql.FieldResolveFn{
-        "Query.list_User": func(p graphql.ResolveParams) (interface{}, error) { return myCustomList(p) },
+        "Query.listUser": func(p graphql.ResolveParams) (interface{}, error) { return myCustomList(p) },
     },
 })
 ```
@@ -551,7 +551,7 @@ node AsyncLocalStorage / go 显式 `actx`。按请求的深度、字段数、int
 
 ```graphql
 query($c: JSON, $l: Int) {
-  list_User(condition: $c, limit: $l) {
+  listUser(condition: $c, limit: $l) {
     _id
     name
     profile { bio }
@@ -573,7 +573,7 @@ params = { c0: { name: "a" }, l: 10 }
 ```json
 {
   "data": {
-    "list_User": [
+    "listUser": [
       { "_id": "u1", "name": "a", "profile": { "bio": "hello" } }
     ]
   }
@@ -630,7 +630,7 @@ generates:
 ```graphql
 # src/queries/ListUsers.graphql
 query ListUsers($c: JSON, $l: Int) {
-  list_User(condition: $c, limit: $l) { _id name }
+  listUser(condition: $c, limit: $l) { _id name }
 }
 ```
 
@@ -639,7 +639,7 @@ import { GraphQLClient } from 'graphql-request';
 import { getSdk } from './gql/graphql';
 
 const sdk = getSdk(new GraphQLClient('http://localhost:4000/graphql'));
-const { list_User } = await sdk.ListUsers({ c: { name: 'a' }, l: 10 });
+const { listUser } = await sdk.ListUsers({ c: { name: 'a' }, l: 10 });
 ```
 
 **优势所在。** SDL 是唯一出口；适配层不自带客户端生成器，故任意标准工具链
@@ -654,7 +654,7 @@ const { list_User } = await sdk.ListUsers({ c: { name: 'a' }, l: 10 });
 
 ```graphql
 query($c: JSON, $s: JSON, $l: Int) {
-  list_User(condition: $c, sort: $s, limit: $l) {
+  listUser(condition: $c, sort: $s, limit: $l) {
     _id
     name
     age
@@ -676,7 +676,7 @@ params = { c0: { age: 18 }, s1: { age: -1 }, l: 20 }
 ```json
 {
   "data": {
-    "list_User": [
+    "listUser": [
       { "_id": "u1", "name": "a", "age": 30 }
     ]
   }
@@ -694,7 +694,7 @@ params = { c0: { age: 18 }, s1: { age: -1 }, l: 20 }
 
 ```graphql
 mutation($input: JSON!) {
-  create_User(input: $input) { _id name age }
+  createUser(input: $input) { _id name age }
 }
 ```
 
@@ -705,19 +705,19 @@ Variables：`{ "input": { "name": "alice", "age": 30 } }` → 返回带真实生
 
 ```graphql
 mutation($id: ID!, $set: JSON!) {
-  update_User(id: $id, set: $set) { name age }
+  updateUser(id: $id, set: $set) { name age }
 }
 ```
 
-Variables：`{ "id": "u1", "set": { "age": 31 } }` → `{ "update_User": { "name": "alice", "age": 31 } }`
+Variables：`{ "id": "u1", "set": { "age": 31 } }` → `{ "updateUser": { "name": "alice", "age": 31 } }`
 
 **删除。**
 
 ```graphql
-mutation { delete_User(id: "u1") }
+mutation { deleteUser(id: "u1") }
 ```
 
-→ `{ "delete_User": true }`；随后 `{ list_User { _id } }` 返回 `[]`。
+→ `{ "deleteUser": true }`；随后 `{ listUser { _id } }` 返回 `[]`。
 
 **优势所在。** 写入复用 store 的 `insert/update/remove`，故归档编排与 RBAC 生效；`update`
 刻意回读，使三端无论 `update` 原始返回形状如何都保持一致。
@@ -748,21 +748,21 @@ mutation { delete_User(id: "u1") }
 { "name": "AuditEvent", "x-graphql": { "readonly": true }, "fields": { "_id": { "type": "string" } } }
 ```
 
-**验证。** SDL 含 `get_AuditEvent`（与 `list_AuditEvent`），但**没有**
-`create_AuditEvent` / `update_AuditEvent` / `delete_AuditEvent`。
+**验证。** SDL 含 `getAuditEvent`（与 `listAuditEvent`），但**没有**
+`createAuditEvent` / `updateAuditEvent` / `deleteAuditEvent`。
 
 **优势所在。** GraphQL 面被声明式收窄，而 store RBAC 继续独立强制——两层独立，无重复逻辑。
 
 ### 8. 按路径替换单个解析器
 
-**业务背景。** `list_User` 须返回一个在通用路径之外算出的专门形状，但 schema 不得改变。
+**业务背景。** `listUser` 须返回一个在通用路径之外算出的专门形状，但 schema 不得改变。
 
 **设置（Node）。**
 
 ```js
 buildGraphQLSchema(store, {
   overrides: {
-    'Query.list_User': async () => [{ _id: 'x', name: 'override', age: 0, profile: null }],
+    'Query.listUser': async () => [{ _id: 'x', name: 'override', age: 0, profile: null }],
   },
 });
 ```
@@ -770,12 +770,12 @@ buildGraphQLSchema(store, {
 **请求 / 响应。**
 
 ```graphql
-{ list_User { name } }
+{ listUser { name } }
 ```
 
-→ `{ "data": { "list_User": [ { "name": "override" } ] } }`
+→ `{ "data": { "listUser": [ { "name": "override" } ] } }`
 
-未命中路径如 `Query.list_Nope` 会让构建抛
+未命中路径如 `Query.listNope` 会让构建抛
 `override 路径 "..." 未命中任何生成字段`，而不是静默不做任何事。
 
 **优势所在。** 你在恰好一个路径上换行为，SDL 保持逐字节一致，故客户端与 codegen 不受影响。
@@ -794,7 +794,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:4000/graphql \
 **超限 `limit`** → HTTP 200，`errors[0].message` 以 `ERR_LIMIT:` 开头：
 
 ```graphql
-query($l: Int) { list_User(limit: $l) { _id } }   # variables: { "l": 1001 }
+query($l: Int) { listUser(limit: $l) { _id } }   # variables: { "l": 1001 }
 ```
 
 **过深查询**（depth 11 > 10）→ **HTTP 400**，`errors[0].message` 以 `ERR_DEPTH:` 开头；
@@ -893,10 +893,10 @@ server {
 
 **支持**
 
-- Query：`get_X` / `list_X`，参数 `condition` / `sort` / `limit`
+- Query：`getX` / `listX`，参数 `condition` / `sort` / `limit`
   （**limit 缺省 50、上限 1000、超限抛 `ERR_LIMIT:`**——core 的行数封顶仅对 text2query 档
   生效；适配层守上界，见 `spec/02`）。
-- Mutation：`create_X` / `update_X` / `delete_X`。
+- Mutation：`createX` / `updateX` / `deleteX`。
 - introspection；fragments 与 `@skip` / `@include`（Node / Python / Go 均已实现）。
 - 注记（`x-graphql.hidden` / `x-graphql.readonly`）、override、extension，以及 schema-first
   逃生舱。
@@ -904,7 +904,7 @@ server {
 **不支持（明确的非目标）**
 
 - **subscription** —— store 无订阅语义，故本皮肤不发明。
-- 输出别名、skip/offset 分页（`$skip`）、`count_X` 聚合根——待 core 语义核实后 v1 收编
+- 输出别名、skip/offset 分页（`$skip`）、`countX` 聚合根——待 core 语义核实后 v1 收编
   （见 `spec/01` 与 `spec/02` 的「待核实」）。
 - 请求批处理——三端均每请求一份 document。
 - v0 字段级注记——写入裁剪仍归 store RBAC。
@@ -930,18 +930,18 @@ core 的行数封顶仅对 `text2query` 档生效，故默认档下省略 `limit
 `__` 被 GraphQL 规范保留给 introspection。core 的控制面模型（`__schemaDef`、`__workflowRun`
 等）会让整个 schema 失效，故它们被无条件过滤掉。
 
-**5. 我能改命名（`get_User`、`list_User`…）吗？**
+**5. 我能改命名（`getUser`、`listUser`…）吗？**
 命名固定，属跨运行时契约。要重塑它，用钩子 4（改 SDL）或钩子 3（用你自己的名字加字段）。
 
 **6. 支持 subscription 吗？**
 不支持——store 无订阅语义，本皮肤不发明。
 
-**7. 支持 offset 分页、别名或 `count_X` 吗？**
+**7. 支持 offset 分页、别名或 `countX` 吗？**
 v0 不支持。offset 分页的 core 参数名与 Node/Python 的 `QueryWithCount` 等价物仍属「待核实」，
 故这些推迟到 v1，而非猜测。
 
 **8. 如何在不改 schema 的前提下定制单个解析器？**
-用钩子 2——按路径 override，例如 `overrides: { 'Query.list_User': myResolver }`。
+用钩子 2——按路径 override，例如 `overrides: { 'Query.listUser': myResolver }`。
 
 **9. 如何在生产关闭 introspection？**
 传 `introspection: false`（Node/Python）或 `DisableIntrospection: true`（Go）。含 `__schema` /
