@@ -488,7 +488,36 @@ def export_sdl(schema):
     return print_schema(schema)
 
 
-# ── spec/04：HTTP 承载（FastAPI，可选依赖）──
+def _stable_error_code(message):
+    """非权限错误的稳定 machine code：`ERR_<CODE>:...` ⇒ `<CODE>`。
+
+    message 原样保留（含前缀）；权限类（ERR_PERMISSION:）不在此改写（code 只增不改）。
+    未知/无冒号前缀 ⇒ None（保持原样，不吞成通用错误）。
+    """
+    if not isinstance(message, str) or not message.startswith('ERR_'):
+        return None
+    head, sep, _ = message.partition(':')
+    if not sep:
+        return None
+    code = head[len('ERR_'):]
+    if code == 'PERMISSION' or not code.isupper():
+        return None
+    return code
+
+
+def _error_payload(err):
+    """GraphQLError → 响应 error 项；非权限 `ERR_*` 前缀额外补 extensions.code。"""
+    formatted = dict(err.formatted)
+    extensions = formatted.get("extensions")
+    if isinstance(extensions, dict) and extensions.get("code"):
+        return formatted
+    code = _stable_error_code(formatted.get("message") or getattr(err, "message", None))
+    if code:
+        formatted["extensions"] = {**(extensions or {}), "code": code}
+    return formatted
+
+
+# ── spec/04：HTTP 承载（FastAPI，可选依赖） ──
 
 
 def create_app(
@@ -670,7 +699,7 @@ def create_app(
             )
         payload = {"data": result.data}
         if result.errors:
-            payload["errors"] = [e.formatted for e in result.errors]
+            payload["errors"] = [_error_payload(e) for e in result.errors]
         return JSONResponse(payload)
 
     return app

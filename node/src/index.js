@@ -441,11 +441,36 @@ function isPermissionClass(e) {
   return isPermissionError(e) || isNoContextError(e);
 }
 
+// spec/04：非权限错误的稳定 machine code——`ERR_<CODE>:...` ⇒ `<CODE>`。
+// message 原样保留（含前缀）；权限类走下方 FORBIDDEN 分支，不在此改写（code 只增不改）。
+const ERR_PREFIX_RE = /^(ERR_[A-Z0-9_]+):/;
+
+function stableErrorCode(message) {
+  if (typeof message !== 'string') return null;
+  const m = ERR_PREFIX_RE.exec(message);
+  if (!m || m[1] === 'ERR_PERMISSION') return null;
+  return m[1].slice('ERR_'.length);
+}
+
 // spec/04：错误呈现默认——非权限错误原样透出（parity py/go，符合本 spec「原样透传」）；
+// `ERR_*` 前缀错误额外补 extensions.code（如 ERR_NOT_FOUND → NOT_FOUND），message 原文保留；
 // 权限类错误附加 HTTP 403 + code FORBIDDEN，message 原样（剥前缀属展示层，走 opts.maskError）
 function defaultMaskError(error, message, isDev) {
   const orig = (error && error.originalError) || error;
-  if (!isPermissionClass(error) && !isPermissionClass(orig)) return error;
+  if (!isPermissionClass(error) && !isPermissionClass(orig)) {
+    const raw = String((error && error.message) || (orig && orig.message) || '');
+    const code = stableErrorCode(raw);
+    if (!code) return error;
+    return new GraphQLError(raw, {
+      nodes: error && error.nodes,
+      path: error && error.path,
+      originalError: orig,
+      extensions: {
+        ...((error && error.extensions) || {}),
+        code,
+      },
+    });
+  }
   return new GraphQLError(String((error && error.message) || ''), {
     nodes: error && error.nodes,
     path: error && error.path,

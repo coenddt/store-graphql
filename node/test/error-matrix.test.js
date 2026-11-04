@@ -42,3 +42,45 @@ test('映射矩阵：Permission 档 → 403；NoContext 档 → 403；其余 →
   assert.equal((await yoga(mkRequest('broken'))).status, 401);
   assert.equal((await yoga(mkRequest('alice'))).status, 200);
 });
+
+const mkQueryRequest = (query) =>
+  new Request('http://localhost/graphql', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ query }),
+  });
+
+const makeQueryStore = (errFactory) => ({
+  list: () => ['User'],
+  get: () => DEFN,
+  setContext() {},
+  query: async () => {
+    throw errFactory();
+  },
+});
+
+test('非权限 ERR_* 前缀补 extensions.code（message 原样保留）', async () => {
+  const { yoga } = createYoga(
+    makeQueryStore(() => new Error(
+      'ERR_NOT_FOUND:目标记录不存在（写条件未命中任何行，_id 不存在或已被删除）',
+    )),
+    { contextFactory: async () => ({ user: 'u1' }) },
+  );
+  const res = await yoga(mkQueryRequest('{ listUser { _id } }'));
+  assert.equal(res.status, 200);
+  const err = (await res.json()).errors[0];
+  assert.equal(err.extensions.code, 'NOT_FOUND');
+  assert.ok(err.message.startsWith('ERR_NOT_FOUND:'), err.message);
+});
+
+test('越权错误保持原权限 code / message（不被非权限映射改写）', async () => {
+  const { yoga } = createYoga(
+    makeQueryStore(() => new Error('ERR_PERMISSION:RBAC:无权写入')),
+    { contextFactory: async () => ({ user: 'u1' }) },
+  );
+  const res = await yoga(mkQueryRequest('{ listUser { _id } }'));
+  assert.equal(res.status, 403);
+  const err = (await res.json()).errors[0];
+  assert.equal(err.extensions.code, 'FORBIDDEN');
+  assert.equal(err.message, 'ERR_PERMISSION:RBAC:无权写入');
+});

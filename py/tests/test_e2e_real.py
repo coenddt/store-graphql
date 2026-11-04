@@ -26,6 +26,8 @@ DEFN = {
         "_id": {"type": "string"},
         "name": {"type": "string"},
         "age": {"type": "int"},
+        # A3: schema 显式 default 必须在 create 落库时生效，否则按 deletedAt:0 列表过滤永远空
+        "deletedAt": {"type": "int", "default": 0},
     },
 }
 
@@ -56,11 +58,29 @@ async def _run_case():
 
         # create:真实 core 生成 _id + timestamps,真实落库
         created = await run(
-            "mutation($input: JSON!) { createUser(input: $input) { _id name age } }",
+            "mutation($input: JSON!) { createUser(input: $input) { _id name age deletedAt } }",
             {"input": {"name": "alice", "age": 30}},
         )
         real_id = created["createUser"]["_id"]
         assert real_id.startswith("u"), f"应返回真实生成的 u 前缀 _id,实际 {real_id}"
+
+        # A3：未传 deletedAt ⇒ 返回值与**落库值**均为 schema 显式 default 0
+        assert created["createUser"]["deletedAt"] == 0
+        cur = await db.execute("SELECT deleted_at FROM users WHERE _id = ?", (real_id,))
+        row = await cur.fetchone()
+        assert row is not None and row[0] == 0, f"deletedAt default 未落库: {row}"
+
+        # A3：按 deletedAt:0 列表过滤能命中；按 5 过滤不命中（原缺陷的复现面）
+        hit = await run(
+            "query($c: JSON) { listUser(condition: $c) { _id } }",
+            {"c": {"deletedAt": 0}},
+        )
+        assert [x["_id"] for x in hit["listUser"]] == [real_id], hit
+        miss = await run(
+            "query($c: JSON) { listUser(condition: $c) { _id } }",
+            {"c": {"deletedAt": 5}},
+        )
+        assert miss["listUser"] == [], miss
 
         # list:投影下推串经真实 core 解析并走 SQLite
         listed = await run("{ listUser { _id name } }")
@@ -83,6 +103,18 @@ async def _run_case():
         assert deleted["deleteUser"] is True
         after = await run("{ listUser { _id } }")
         assert after["listUser"] == []
+
+        # A3：显式传入值优先于 default（落库 5，不被 0 覆盖）
+        five = await run(
+            "mutation($input: JSON!) { createUser(input: $input) { _id deletedAt } }",
+            {"input": {"name": "bob", "deletedAt": 5}},
+        )
+        assert five["createUser"]["deletedAt"] == 5, five
+        cond5 = await run(
+            "query($c: JSON) { listUser(condition: $c) { _id } }",
+            {"c": {"deletedAt": 5}},
+        )
+        assert [x["_id"] for x in cond5["listUser"]] == [five["createUser"]["_id"]], cond5
 
 
 def test_e2e_real_sqlite():

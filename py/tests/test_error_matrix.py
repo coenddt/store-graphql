@@ -59,3 +59,38 @@ def test_error_matrix_context_tiers_to_status():
     assert _post(client, "nocontext").status_code == 403
     assert _post(client, "broken").status_code == 401
     assert _post(client, "alice").status_code == 200
+
+
+class _NotFoundStore(_Store):
+    async def query(self, gql, params=None):
+        raise RuntimeError(
+            "ERR_NOT_FOUND:目标记录不存在（写条件未命中任何行，_id 不存在或已被删除）"
+        )
+
+
+class _PermissionStore(_Store):
+    async def query(self, gql, params=None):
+        raise _PermissionError("ERR_PERMISSION:RBAC:无权写入")
+
+
+def _query_client(store):
+    return TestClient(create_app(store, context_provider=lambda _r: {"user": "u1"}))
+
+
+def test_non_permission_err_prefix_maps_to_extensions_code():
+    res = _query_client(_NotFoundStore()).post(
+        "/graphql", json={"query": "{ listUser { _id } }"}
+    )
+    assert res.status_code == 200
+    err = res.json()["errors"][0]
+    assert err["extensions"]["code"] == "NOT_FOUND"
+    assert err["message"].startswith("ERR_NOT_FOUND:")
+
+
+def test_permission_error_keeps_original_message_without_code_rewrite():
+    res = _query_client(_PermissionStore()).post(
+        "/graphql", json={"query": "{ listUser { _id } }"}
+    )
+    err = res.json()["errors"][0]
+    assert err["message"] == "ERR_PERMISSION:RBAC:无权写入"
+    assert "code" not in (err.get("extensions") or {})
