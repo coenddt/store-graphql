@@ -227,18 +227,24 @@ func TestReservedNameFiltering(t *testing.T) {
 	user := defnMap(t)
 	internal := defnMap(t)
 	internal["name"] = "__workflowRun"
+	archived := defnMap(t)
+	archived["name"] = "UserDeleted"
 
 	cases := map[string]Options{
-		"auto":     {Schemas: []map[string]any{user, internal}},
-		"explicit": {Schemas: []map[string]any{user, internal}, Resources: []string{"User", "__workflowRun"}},
+		"auto":              {Schemas: []map[string]any{user, internal}},
+		"explicit":          {Schemas: []map[string]any{user, internal}, Resources: []string{"User", "__workflowRun"}},
+		"explicit-archived": {Schemas: []map[string]any{user, archived}, Resources: []string{"User", "UserDeleted"}},
 	}
 	for name, opts := range cases {
 		schema, err := Build(newMockStore(t), opts)
 		if err != nil {
-			t.Fatalf("%s: 含 `__` 模型不应导致 Build 失败: %v", name, err)
+			t.Fatalf("%s: 含 `__` / 归档模型不应导致 Build 失败: %v", name, err)
 		}
 		if typ := schema.Type("__workflowRun"); typ != nil {
 			t.Fatalf("%s: __workflowRun 不应注册进类型空间，实际 %v", name, typ)
+		}
+		if typ := schema.Type("UserDeleted"); typ != nil {
+			t.Fatalf("%s: 显式点名的归档表不应注册，实际 %v", name, typ)
 		}
 		for field := range schema.QueryType().Fields() {
 			if strings.Contains(field, "workflowRun") {

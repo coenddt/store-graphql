@@ -102,6 +102,10 @@ test('schema 过滤：`__` 前缀控制面内建模型不得进 GraphQL schema�
   const explicit = buildGraphQLSchema(store, { resources: ['User', '__workflowRun'] });
   assert.ok(explicit.getType('User'));
   assert.equal(explicit.getType('__workflowRun'), undefined);
+  // 显式点名归档表同样被归档过滤（spec/01，行为修正：原实现显式入参跳过归档过滤）
+  const archived = buildGraphQLSchema(store, { resources: ['User', 'UserDeleted'] });
+  assert.ok(archived.getType('User'));
+  assert.equal(archived.getType('UserDeleted'), undefined);
 });
 
 test('SDL 自动生成：类型映射与生成面（spec/01）', async () => {

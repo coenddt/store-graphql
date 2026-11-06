@@ -111,6 +111,10 @@ def test_schema_filters_reserved_builtin_models():
     explicit = build_graphql_schema(store, resources=["User", "__workflowRun"])
     assert explicit.get_type("User") is not None
     assert explicit.get_type("__workflowRun") is None
+    # 显式点名归档表同样被归档过滤（spec/01，行为修正：原实现显式入参跳过归档过滤）
+    archived = build_graphql_schema(store, resources=["User", "UserDeleted"])
+    assert archived.get_type("User") is not None
+    assert archived.get_type("UserDeleted") is None
 
 
 def test_sdl_generation():
