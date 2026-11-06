@@ -10,4 +10,4 @@ app = create_app(store, schema=schema)    # FastAPI 承载（可选依赖）；�
 export_sdl(schema)                        # SDL 导出，喂客户端 codegen
 ```
 
-完整文档（双语主文档 / spec / conformance）：见仓库根 [README.zh-CN.md](https://github.com/coenddt/store-graphql#readme)。
+完整文档（中文主文档 / spec / conformance）：见仓库根 [README.md](https://github.com/coenddt/store-graphql#readme)，English: [README.en.md](https://github.com/coenddt/store-graphql/blob/main/README.en.md)。
