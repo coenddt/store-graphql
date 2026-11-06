@@ -14,6 +14,12 @@
   `graphql.NewObject` 注册进公开类型空间（graphql-go v0.8.1 只校验名字正则，不校验 `__` 前缀）。
   现按 spec/01 与 node / py 同语义：`__` 前缀模型静默跳过注册（不报错），显式 `Options.Resources`
   同样过滤；过滤顺序为归档过滤 → 保留名过滤。
+- **显式 `resources` 未套归档过滤（行为修正，非新特性）**：node / py 原实现为
+  `filterReserved(resources || filterArchived(store.list()))`，显式传入 `resources` 时**跳过**归档过滤，
+  与 spec/01「显式指定时仍套用同一过滤」及 go 实现不符。现统一为
+  `filterReserved(filterArchived(resources ?? store.list()))`，三端一致：显式点名归档表
+  （如 `UserDeleted`）不再生成类型与字段。此为对既有契约（spec/01）的兑现修正，
+  不新增开关、不引入新特性。
 
 ## 0.6.0 (2026-11-02)
 

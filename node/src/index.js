@@ -337,7 +337,7 @@ function buildGraphQLSchema(store, opts = {}) {
   const overrides = opts.overrides || {};
   const extensions = opts.extensions || {};
 
-  const names = filterReserved(opts.resources || filterArchived(store.list()));
+  const names = filterReserved(filterArchived(opts.resources ?? store.list()));
   const queryFields = {};
   const mutationFields = {};
   const usedOverrideKeys = new Set();

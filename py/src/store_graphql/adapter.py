@@ -395,7 +395,7 @@ def build_graphql_schema(
 ):
     overrides = dict(overrides or {})
     extensions = dict(extensions or {})
-    names = filter_reserved(resources if resources is not None else filter_archived(store.list()))
+    names = filter_reserved(filter_archived(resources if resources is not None else store.list()))
 
     query_fields = {}
     mutation_fields = {}
