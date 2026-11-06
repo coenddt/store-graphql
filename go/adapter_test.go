@@ -218,6 +218,39 @@ func TestSDLGeneration(t *testing.T) {
 	}
 }
 
+func TestReservedNameFiltering(t *testing.T) {
+	// spec/01 保留名过滤：`__` 前缀为 introspection 保留，core 控制面内建模型不得进公开类型空间。
+	if got := filterReserved([]string{"User", "__workflowRun", "__feedback"}); len(got) != 1 || got[0] != "User" {
+		t.Fatalf("filterReserved 应只保留 User，实际 %v", got)
+	}
+
+	user := defnMap(t)
+	internal := defnMap(t)
+	internal["name"] = "__workflowRun"
+
+	cases := map[string]Options{
+		"auto":     {Schemas: []map[string]any{user, internal}},
+		"explicit": {Schemas: []map[string]any{user, internal}, Resources: []string{"User", "__workflowRun"}},
+	}
+	for name, opts := range cases {
+		schema, err := Build(newMockStore(t), opts)
+		if err != nil {
+			t.Fatalf("%s: 含 `__` 模型不应导致 Build 失败: %v", name, err)
+		}
+		if typ := schema.Type("__workflowRun"); typ != nil {
+			t.Fatalf("%s: __workflowRun 不应注册进类型空间，实际 %v", name, typ)
+		}
+		for field := range schema.QueryType().Fields() {
+			if strings.Contains(field, "workflowRun") {
+				t.Fatalf("%s: Query 不应出现 workflowRun 字段，实际 %q", name, field)
+			}
+		}
+		if schema.Type("User") == nil {
+			t.Fatalf("%s: User 应正常保留", name)
+		}
+	}
+}
+
 func TestContextErrorClassification(t *testing.T) {
 	// spec/04：PermissionError（core ERR_PERMISSION: 前缀）⇒ 403；其余 ⇒ 401；1MB 体限 ⇒ 413
 	st := newMockStore(t)

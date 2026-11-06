@@ -98,6 +98,10 @@ test('schema 过滤：`__` 前缀控制面内建模型不得进 GraphQL schema�
   assert.equal(schema.getType('__workflowRun'), undefined);
   assert.equal(schema.getType('__feedback'), undefined);
   assert.equal(schema.getQueryType().getFields().list_workflowRun, undefined);
+  // 显式 resources 入参同样过滤（spec/01）
+  const explicit = buildGraphQLSchema(store, { resources: ['User', '__workflowRun'] });
+  assert.ok(explicit.getType('User'));
+  assert.equal(explicit.getType('__workflowRun'), undefined);
 });
 
 test('SDL 自动生成：类型映射与生成面（spec/01）', async () => {

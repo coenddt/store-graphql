@@ -107,6 +107,10 @@ def test_schema_filters_reserved_builtin_models():
     assert schema.get_type("__workflowRun") is None
     assert schema.get_type("__feedback") is None
     assert "list_workflowRun" not in schema.get_type("Query").fields
+    # 显式 resources 入参同样过滤（spec/01）
+    explicit = build_graphql_schema(store, resources=["User", "__workflowRun"])
+    assert explicit.get_type("User") is not None
+    assert explicit.get_type("__workflowRun") is None
 
 
 def test_sdl_generation():
