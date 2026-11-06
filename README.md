@@ -11,7 +11,7 @@ Chinese docs: [README.zh-CN.md](./README.zh-CN.md) · Production guardrails: [DE
 
 - The schema is the only source of truth — no second type system, no hand-written SDL.
 - Every field rides the store's existing semantics: RBAC, computed columns, relations, dialect routing.
-- Current release: `0.6.1` (Node ≥ 18, Python ≥ 3.10, plus a v0 Go adapter in `go/`).
+- Current release: `0.6.2` (Node ≥ 18, Python ≥ 3.10, plus a v0 Go adapter in `go/`).
 
 ## Nine requests for one screen
 
@@ -87,7 +87,7 @@ On Node and Python, fragments are expanded, `@skip` / `@include` are evaluated d
 
 The skin installs no DataLoader and no per-parent child resolver. Whatever nested subtree is selected is part of the one pushed-down projection, and the core compiles declared relations into the same statement — a `LEFT JOIN` on SQL backends, a `$lookup` inside the aggregation pipeline on MongoDB. A computed aggregate such as `lessonCount: { agg: { $count: "lessons" } }` arrives as an ordinary field on the type, so asking for it adds zero round trips.
 
-One caveat for `0.6.1`: the generator reflects `fields` and `computes`. A relation declared only under `defn.relations` is resolved by the core but is not auto-added as a GraphQL field. The single-query path is in place; auto-typing the relation surface is not. Until then, use a computed aggregate or a `Query` extension that calls `store.query` with the relation projection.
+One caveat for `0.6.2`: the generator reflects `fields` and `computes`. A relation declared only under `defn.relations` is resolved by the core but is not auto-added as a GraphQL field. The single-query path is in place; auto-typing the relation surface is not. Until then, use a computed aggregate or a `Query` extension that calls `store.query` with the relation projection.
 
 ### RBAC and the shape of an error
 
@@ -189,7 +189,7 @@ curl -s http://localhost:4000/graphql \
 
 - **You need subscriptions.** There are none. The store has no subscription semantics, and this skin does not invent them.
 - **You need offset paging or a count root.** `listX` exposes only `limit`; `skip` / `page` and `countX` are not generated.
-- **You expect relations to appear automatically.** In `0.6.1` only `fields` and `computes` are typed; `defn.relations` is not auto-exposed.
+- **You expect relations to appear automatically.** In `0.6.2` only `fields` and `computes` are typed; `defn.relations` is not auto-exposed.
 - **You want to inline JSON arguments.** `condition`, `sort`, `input` and `set` accept variables only; inline literals are rejected by deliberate design.
 - **You rely on output aliases.** v0 serializes by field name and drops aliases.
 - **You are exposing it anonymously.** The core treats a missing context as "skip permission checks". Configure the context hook and enable `setRequireContext(true)` before putting this on a public network.
