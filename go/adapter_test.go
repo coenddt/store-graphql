@@ -331,6 +331,10 @@ func TestQueryDepthGuard(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "ERR_DEPTH:") {
 		t.Fatalf("超限应带 ERR_DEPTH: 前缀: %s", rec.Body.String())
 	}
+	// spec/04 统一规则：extensions.code 去 ERR_ 前缀
+	if !strings.Contains(rec.Body.String(), `"code":"DEPTH"`) {
+		t.Fatalf("extensions.code 应为 DEPTH: %s", rec.Body.String())
+	}
 }
 
 func TestComplexityAndIntrospectionGuard(t *testing.T) {

@@ -282,6 +282,7 @@ test('查询深度守卫：算法单元 + HTTP 层 400（spec/04）', async () =
   assert.equal(deep3.status, 400);
   const body = await deep3.json();
   assert.ok(body.errors[0].message.includes('ERR_DEPTH:'));
+  assert.equal(body.errors[0].extensions.code, 'DEPTH'); // 统一规则：去 ERR_ 前缀
 });
 
 test('复杂度与 introspection 守卫（spec/04）', async () => {
@@ -305,13 +306,17 @@ test('复杂度与 introspection 守卫（spec/04）', async () => {
   assert.equal((await post('{ listUser { _id } }')).status, 200);
   const over = await post('{ listUser { _id name } }');
   assert.equal(over.status, 400);
-  assert.ok((await over.json()).errors[0].message.includes('ERR_COMPLEXITY:'));
+  const overBody = await over.json();
+  assert.ok(overBody.errors[0].message.includes('ERR_COMPLEXITY:'));
+  assert.equal(overBody.errors[0].extensions.code, 'COMPLEXITY');
 
   // __typename 放行(无泄露面);__schema ⇒ 400 + ERR_INTROSPECTION:
   assert.equal((await post('{ __typename }')).status, 200);
   const intro = await post('{ __schema { queryType { name } } }');
   assert.equal(intro.status, 400);
-  assert.ok((await intro.json()).errors[0].message.includes('ERR_INTROSPECTION:'));
+  const introBody = await intro.json();
+  assert.ok(introBody.errors[0].message.includes('ERR_INTROSPECTION:'));
+  assert.equal(introBody.errors[0].extensions.code, 'INTROSPECTION');
 });
 
 test('override / extend（spec/03 钩子 2、3）与未知路径校验', async () => {
