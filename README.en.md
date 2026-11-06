@@ -99,9 +99,12 @@ The adapter never re-implements permissions. A `contextFactory` (Node) or `conte
 | Permission error `ERR_PERMISSION:` | 403 | message unchanged, `extensions.code = "FORBIDDEN"` | absent |
 | Missing context, `no_context` / `ERR_NO_CONTEXT:` | 403 | message unchanged | absent |
 | Any other context-hook failure | 401 | message unchanged | absent |
-| Depth, field-count or introspection guard | 400 | `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:` | absent |
+| Depth, field-count or introspection guard | 400 | message keeps `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:`; `extensions.code = "DEPTH"` / `"COMPLEXITY"` / `"INTROSPECTION"` (uniform `ERR_` stripping) | absent |
 
-This is the Node reference mapping from `spec/04`. Python's `create_app` returns execution errors inside a 200 payload and applies the 403/401 split to `context_provider` failures; its request guards also return 400. A `getX` miss is not an error: it returns `null`.
+This is the Node reference mapping from `spec/04`. Python's `create_app` now agrees with Node on
+execution-time permission errors (403 + `FORBIDDEN`); other execution errors stay in a 200 payload.
+`context_provider` failures use the 403/401 split, and guard responses emit `extensions.code` by the
+same "strip `ERR_`" rule. A `getX` miss is not an error: it returns `null`.
 
 ## Run it
 

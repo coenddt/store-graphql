@@ -505,6 +505,17 @@ def _stable_error_code(message):
     return code
 
 
+def _is_permission_class(err, permission_error):
+    """权限类（含同档 NoContext）判定：按类型 / machine code / 稳定前缀，禁按中文文案。"""
+    orig = getattr(err, "original_error", None) or err
+    if permission_error is not None and isinstance(orig, permission_error):
+        return True
+    if getattr(orig, "code", None) == "no_context":
+        return True
+    msg = getattr(orig, "message", None) or str(orig) or ""
+    return msg.startswith("ERR_PERMISSION:") or msg.startswith("ERR_NO_CONTEXT:")
+
+
 def _error_payload(err):
     """GraphQLError → 响应 error 项；非权限 `ERR_*` 前缀额外补 extensions.code。"""
     formatted = dict(err.formatted)
@@ -514,6 +525,15 @@ def _error_payload(err):
     code = _stable_error_code(formatted.get("message") or getattr(err, "message", None))
     if code:
         formatted["extensions"] = {**(extensions or {}), "code": code}
+    return formatted
+
+
+def _forbidden_payload(err):
+    """权限类错误呈现（spec/04）：HTTP 403 + `extensions.code = FORBIDDEN`；message 原样保留前缀。"""
+    formatted = dict(err.formatted)
+    extensions = dict(formatted.get("extensions") or {})
+    extensions["code"] = "FORBIDDEN"
+    formatted["extensions"] = extensions
     return formatted
 
 
@@ -655,7 +675,7 @@ def create_app(
                         "errors": [
                             {
                                 "message": f"ERR_DEPTH:查询深度 {depth} 超过上限 {depth_limit}",
-                                "extensions": {"code": "ERR_DEPTH"},
+                                "extensions": {"code": "DEPTH"},
                             }
                         ]
                     },
@@ -668,7 +688,7 @@ def create_app(
                         "errors": [
                             {
                                 "message": "ERR_INTROSPECTION:introspection 已禁用",
-                                "extensions": {"code": "ERR_INTROSPECTION"},
+                                "extensions": {"code": "INTROSPECTION"},
                             }
                         ]
                     },
@@ -680,7 +700,7 @@ def create_app(
                         "errors": [
                             {
                                 "message": f"ERR_COMPLEXITY:查询字段数 {usage['fields']} 超过上限 {fields_limit}",
-                                "extensions": {"code": "ERR_COMPLEXITY"},
+                                "extensions": {"code": "COMPLEXITY"},
                             }
                         ]
                     },
@@ -699,7 +719,14 @@ def create_app(
             )
         payload = {"data": result.data}
         if result.errors:
-            payload["errors"] = [_error_payload(e) for e in result.errors]
+            # spec/04：权限类（含同档 NoContext）⇒ HTTP 403 + code FORBIDDEN（与 node 对齐）；
+            # 其余错误保持 200 + 原样透出（仅补 extensions.code）。
+            forbidden = any(_is_permission_class(e, permission_error) for e in result.errors)
+            payload["errors"] = [
+                _forbidden_payload(e) if _is_permission_class(e, permission_error) else _error_payload(e)
+                for e in result.errors
+            ]
+            return JSONResponse(payload, status_code=403 if forbidden else 200)
         return JSONResponse(payload)
 
     return app

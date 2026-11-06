@@ -101,9 +101,10 @@ Node 与 Python 都会展开 fragment、在序列化时求值 `@skip` / `@includ
 | 权限错误 `ERR_PERMISSION:` | 403 | message 不变，`extensions.code = "FORBIDDEN"` | 缺席 |
 | 上下文缺失 `no_context` / `ERR_NO_CONTEXT:` | 403 | message 不变 | 缺席 |
 | 其余 context hook 失败 | 401 | message 不变 | 缺席 |
-| 深度、字段数或 introspection 守卫 | 400 | `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:` | 缺席 |
+| 深度、字段数或 introspection 守卫 | 400 | message 带 `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:`；`extensions.code = "DEPTH"` / `"COMPLEXITY"` / `"INTROSPECTION"`（统一去 `ERR_` 前缀） | 缺席 |
 
-这是 `spec/04` 的 Node 参考映射。Python 的 `create_app` 把执行错误放进 200 响应体，只对 `context_provider` 失败套用 403/401 分流；它的请求守卫同样返回 400。`getX` 未命中不是错误：它返回 `null`。
+这是 `spec/04` 的 Node 参考映射。Python 的 `create_app` 对执行期权限类错误与 Node 同义（403 + `FORBIDDEN`），
+其余执行错误放进 200 响应体；`context_provider` 失败套用 403/401 分流；请求守卫同样返回 400 且 `extensions.code` 按同一「去 `ERR_` 前缀」规则产出。`getX` 未命中不是错误：它返回 `null`。
 
 ## 跑起来
 

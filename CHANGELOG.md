@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **py 执行期权限错误与 node 对齐**：解析器抛出的权限类错误（`PermissionError` 类型 / `ERR_PERMISSION:` /
+  同档 `ERR_NO_CONTEXT:` / `no_context`）由 HTTP 200 改为 **403 + `extensions.code = "FORBIDDEN"`**，
+  message 原样保留前缀；其余执行错误仍为 200。
+- **`extensions.code` 规则统一**：请求级守卫的 `extensions.code` 由 `ERR_DEPTH` / `ERR_COMPLEXITY` /
+  `ERR_INTROSPECTION` 改为 `DEPTH` / `COMPLEXITY` / `INTROSPECTION`（与业务错误一致：稳定前缀去 `ERR_`），
+  message 仍保留 `ERR_` 前缀。node / py / go 同步。
+
 ## 0.6.0 (2026-11-02)
 
 ### Breaking（修复：根字段命名 `动作前缀_模型名` → 纯驼峰）

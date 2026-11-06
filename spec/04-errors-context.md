@@ -34,7 +34,11 @@
 ## 错误呈现（node：Yoga 掩码默认）
 
 - **默认原样透出 message**（与 py / go 一致，符合本 spec 首节「原样透传，不吞不改写」）——node 经 Yoga `maskedErrors.maskError` 实现；py/go 执行器本就原样透出，故本项为三端 parity
-- **权限类错误**（core 稳定前缀 `ERR_PERMISSION:`，或权限类同档的 `NoContext`：主机 `NoContextError` machine code `no_context` / core 前缀 `ERR_NO_CONTEXT:`）⇒ HTTP **403** + `extensions.code = 'FORBIDDEN'`；message **原样保留前缀**（前缀剥离属展示层选择，禁写死进适配层）
+- **权限类错误**（core 稳定前缀 `ERR_PERMISSION:`，或权限类同档的 `NoContext`：主机 `NoContextError` machine code `no_context` / core 前缀 `ERR_NO_CONTEXT:`）⇒ HTTP **403** + `extensions.code = 'FORBIDDEN'`；message **原样保留前缀**（前缀剥离属展示层选择，禁写死进适配层）。**py / go 与 node 同语义**：执行期解析到的权限类错误同样返回 403 + `FORBIDDEN`，不得以 HTTP 200 静默承载。
+- **`extensions.code` 统一规则**：所有稳定 machine code 一律取「message 的 `ERR_` 稳定前缀去掉 `ERR_`」——
+  业务错误 `ERR_NOT_FOUND:` ⇒ `NOT_FOUND`，请求级守卫 `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:`
+  ⇒ `DEPTH` / `COMPLEXITY` / `INTROSPECTION`；唯一例外是权限类 ⇒ 固定 `FORBIDDEN`（语义级归类，不沿用 `PERMISSION`）。
+  **`message` 始终保留原前缀**。三端（node / py / go）按此同一规则产出，禁在守卫分支自行拼 `ERR_` 前缀。
 - 覆盖口子：`maskError` 单独覆盖掩码函数；`maskedErrors` 直通 Yoga（对外部署可传 Yoga 默认掩码或自定策略，见 [DEPLOYMENT.md](../DEPLOYMENT.md)）
 
 ## HTTP 承载封装

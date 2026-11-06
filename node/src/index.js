@@ -541,18 +541,18 @@ function createYoga(store, opts = {}) {
           const d = queryDepthOf(args.document);
           if (d > depthLimit) {
             throw new GraphQLError(`ERR_DEPTH:查询深度 ${d} 超过上限 ${depthLimit}`, {
-              extensions: { code: 'ERR_DEPTH', http: { status: 400 } },
+              extensions: { code: 'DEPTH', http: { status: 400 } },
             });
           }
           const { fields, introspectionUsed } = queryFieldCount(args.document);
           if (introspectionUsed && !introspectionEnabled) {
             throw new GraphQLError('ERR_INTROSPECTION:introspection 已禁用', {
-              extensions: { code: 'ERR_INTROSPECTION', http: { status: 400 } },
+              extensions: { code: 'INTROSPECTION', http: { status: 400 } },
             });
           }
           if (fields > fieldsLimit) {
             throw new GraphQLError(`ERR_COMPLEXITY:查询字段数 ${fields} 超过上限 ${fieldsLimit}`, {
-              extensions: { code: 'ERR_COMPLEXITY', http: { status: 400 } },
+              extensions: { code: 'COMPLEXITY', http: { status: 400 } },
             });
           }
         },

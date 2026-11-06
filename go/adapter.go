@@ -785,20 +785,20 @@ func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 				if d := queryDepth(doc); d > depthLimit {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadRequest)
-					_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_DEPTH:查询深度 %d 超过上限 %d","extensions":{"code":"ERR_DEPTH"}}]}`, d, depthLimit)
+					_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_DEPTH:查询深度 %d 超过上限 %d","extensions":{"code":"DEPTH"}}]}`, d, depthLimit)
 					return
 				}
 				fields, introUsed := queryFieldCount(doc)
 				if introUsed && opts.DisableIntrospection {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadRequest)
-					_, _ = w.Write([]byte(`{"errors":[{"message":"ERR_INTROSPECTION:introspection 已禁用","extensions":{"code":"ERR_INTROSPECTION"}}]}`))
+					_, _ = w.Write([]byte(`{"errors":[{"message":"ERR_INTROSPECTION:introspection 已禁用","extensions":{"code":"INTROSPECTION"}}]}`))
 					return
 				}
 				if fields > fieldsLimit {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadRequest)
-					_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_COMPLEXITY:查询字段数 %d 超过上限 %d","extensions":{"code":"ERR_COMPLEXITY"}}]}`, fields, fieldsLimit)
+					_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_COMPLEXITY:查询字段数 %d 超过上限 %d","extensions":{"code":"COMPLEXITY"}}]}`, fields, fieldsLimit)
 					return
 				}
 			}
