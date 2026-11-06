@@ -10,6 +10,10 @@
 - **`extensions.code` 规则统一**：请求级守卫的 `extensions.code` 由 `ERR_DEPTH` / `ERR_COMPLEXITY` /
   `ERR_INTROSPECTION` 改为 `DEPTH` / `COMPLEXITY` / `INTROSPECTION`（与业务错误一致：稳定前缀去 `ERR_`），
   message 仍保留 `ERR_` 前缀。node / py / go 同步。
+- **go 补 `__` 保留名过滤**：`Build` 此前无过滤，`__workflowRun` 等 core 控制面内建模型会被
+  `graphql.NewObject` 注册进公开类型空间（graphql-go v0.8.1 只校验名字正则，不校验 `__` 前缀）。
+  现按 spec/01 与 node / py 同语义：`__` 前缀模型静默跳过注册（不报错），显式 `Options.Resources`
+  同样过滤；过滤顺序为归档过滤 → 保留名过滤。
 
 ## 0.6.0 (2026-11-02)
 

@@ -166,6 +166,25 @@ type Options struct {
 	ContextProvider func(r *http.Request) (*gostore.Context, error)
 }
 
+// gqlReservedPrefix GraphQL 规范：`__` 前缀保留给 introspection，不得作为类型名
+// （spec/01 保留名过滤）。core 注册的控制面内建模型（__workflowRun / __schemaDef /
+// __workflowDef / __feedback）一律不进公开类型空间。
+const gqlReservedPrefix = "__"
+
+// filterReserved GraphQL 保留名过滤（spec/01）：跳过 `__` 前缀模型，不报错——
+// 与 node/py 端 filterReserved / filter_reserved 同语义（含显式 Resources 入参）。
+// 该过滤为 GraphQL 皮专有约束（REST/gRPC/MCP 无此限制），故不并入 FilterArchived。
+func filterReserved(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if strings.HasPrefix(n, gqlReservedPrefix) {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
 // FilterArchived 归档表过滤（spec/01，多端逐字一致）。
 func FilterArchived(names []string) []string {
 	set := make(map[string]struct{}, len(names))
@@ -590,7 +609,8 @@ func Build(st Store, opts Options) (graphql.Schema, error) {
 			byName[n] = defn
 		}
 	}
-	names = FilterArchived(names)
+	// spec/01：先归档过滤，再 `__` 保留名过滤（后者对显式 Resources 同样生效）。
+	names = filterReserved(FilterArchived(names))
 
 	queryFields := graphql.Fields{}
 	mutationFields := graphql.Fields{}

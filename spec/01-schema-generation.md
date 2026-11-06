@@ -9,6 +9,14 @@
 
 `XxxDeleted` 且 `Xxx` 也在列表中 ⇒ 归档表，不生成任何类型与字段。`Options/Resources` 显式指定时仍套用同一过滤。
 
+## 保留名过滤（GraphQL 皮专有）
+
+GraphQL 规范把 `__` 前缀保留给 introspection，故凡以 `__` 开头的模型名一律**跳过注册**（不报错、不降级为其他类型）——core 控制面内建模型（`__workflowRun`、`__schemaDef`、`__workflowDef`、`__feedback`）因此不会进入公开类型空间。`Options/Resources` 显式指定时套用同一过滤。
+
+- 三端语义一致：node `filterReserved` / py `filter_reserved` / go `filterReserved`（顺序：先归档过滤，再保留名过滤）
+- 该过滤仅限 GraphQL 皮；REST / gRPC / MCP 不套用（其资源面不生成 GraphQL 类型，`__` 名无冲突）
+- 与归档过滤同档：属声明式排除，静默跳过；不视为守卫拦截，故不产生告警事件
+
 ## 类型映射（defn `fields.*.type` → GraphQL 输出类型）
 
 词汇表出处：`py-store/example/course-platform/schema.json` 实测全集 `string / int / float / bool / datetime / object / array`。
