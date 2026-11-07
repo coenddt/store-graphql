@@ -308,7 +308,7 @@ func TestLimitGuard(t *testing.T) {
 	}
 	// params.l = 50 经 do 的 res 断言不可见,直接再查一次带显式变量确认守卫放行路径
 	res := graphql.Do(graphql.Params{Schema: schema, Context: context.Background(),
-		RequestString: `query($l: Int){ listUser(limit: $l){ _id } }`,
+		RequestString:  `query($l: Int){ listUser(limit: $l){ _id } }`,
 		VariableValues: map[string]interface{}{"l": 1000}})
 	if res.HasErrors() {
 		t.Fatalf("边界 1000 应通过: %v", res.Errors)
@@ -318,7 +318,7 @@ func TestLimitGuard(t *testing.T) {
 	}
 
 	over := graphql.Do(graphql.Params{Schema: schema, Context: context.Background(),
-		RequestString: `query($l: Int){ listUser(limit: $l){ _id } }`,
+		RequestString:  `query($l: Int){ listUser(limit: $l){ _id } }`,
 		VariableValues: map[string]interface{}{"l": 1001}})
 	if !over.HasErrors() || !strings.Contains(over.Errors[0].Error(), "ERR_LIMIT:") {
 		t.Fatalf("超限应带 ERR_LIMIT: 前缀: %v", over.Errors)
@@ -540,5 +540,77 @@ func TestAnnotationsAndOverride(t *testing.T) {
 		Overrides: map[string]graphql.FieldResolveFn{"Query.listNope": func(p graphql.ResolveParams) (interface{}, error) { return nil, nil }},
 	}); err == nil || !strings.Contains(err.Error(), "未命中") {
 		t.Fatalf("未知 override 路径应报错，实际: %v", err)
+	}
+}
+
+// ── 第二轮：执行期错误呈现（spec/04 三端同规则）──
+
+type errAlways struct{ err error }
+
+func (e *errAlways) Query(context.Context, string, map[string]any, *gostore.Context) ([]map[string]any, error) {
+	return nil, e.err
+}
+func (e *errAlways) Insert(context.Context, string, map[string]any, *gostore.Context) (map[string]any, error) {
+	return nil, e.err
+}
+func (e *errAlways) Update(context.Context, string, map[string]any, map[string]any, *gostore.Context) (map[string]any, error) {
+	return nil, e.err
+}
+func (e *errAlways) Remove(context.Context, string, map[string]any, *gostore.Context) (map[string]any, error) {
+	return nil, e.err
+}
+
+type errText struct{ msg string }
+
+func (e *errText) Error() string { return e.msg }
+
+// TestExecutionErrorPresentation 第二轮实测：执行期 core 稳定前缀错误的 HTTP 形态。
+// 改前（基线）：全部 HTTP 200 且 errors 无 extensions.code；权限类也未 403。
+// 改后：ERR_<CODE>: ⇒ extensions.code=<CODE>；权限类（含同档 NoContext）⇒ HTTP 403 + FORBIDDEN。
+func TestExecutionErrorPresentation(t *testing.T) {
+	cases := []struct {
+		msg      string
+		wantHTTP int
+		wantCode string
+	}{
+		{"ERR_NOT_FOUND:行不存在", http.StatusOK, "NOT_FOUND"},
+		{"ERR_PERMISSION:RBAC:无权写入", http.StatusForbidden, "FORBIDDEN"},
+		{"ERR_NO_CONTEXT:上下文缺失", http.StatusForbidden, "FORBIDDEN"},
+		{"ERR_RESOURCE_NOT_FOUND:资源无任何可读副本", http.StatusOK, "RESOURCE_NOT_FOUND"},
+		{"ERR_LIMIT:limit 超过上限 1000", http.StatusOK, "LIMIT"},
+		{"普通执行错误", http.StatusOK, ""},
+	}
+	for _, tc := range cases {
+		schema, err := Build(&errAlways{err: &errText{msg: tc.msg}}, Options{Schemas: []map[string]any{defnMap(t)}})
+		if err != nil {
+			t.Fatalf("Build 失败: %v", err)
+		}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query":"query { listUser { _id } }"}`))
+		req.Header.Set("Content-Type", "application/json")
+		Handler(schema, Options{})(rec, req)
+
+		if rec.Code != tc.wantHTTP {
+			t.Errorf("%q: HTTP 期望 %d 实际 %d，body=%s", tc.msg, tc.wantHTTP, rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Errors []struct {
+				Message    string                 `json:"message"`
+				Extensions map[string]interface{} `json:"extensions"`
+			} `json:"errors"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("%q: 响应不是 JSON: %v", tc.msg, err)
+		}
+		if len(payload.Errors) == 0 {
+			t.Fatalf("%q: 缺少 errors[]", tc.msg)
+		}
+		if payload.Errors[0].Message != tc.msg {
+			t.Errorf("%q: message 未原样透传，实际 %q", tc.msg, payload.Errors[0].Message)
+		}
+		got, _ := payload.Errors[0].Extensions["code"].(string)
+		if got != tc.wantCode {
+			t.Errorf("%q: extensions.code 期望 %q 实际 %q", tc.msg, tc.wantCode, got)
+		}
 	}
 }

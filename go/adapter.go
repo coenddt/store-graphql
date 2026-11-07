@@ -23,6 +23,7 @@ import (
 
 	"github.com/coenddt/go-store"
 	"github.com/graphql-go/graphql"
+	"github.com/graphql-go/graphql/gqlerrors"
 	"github.com/graphql-go/graphql/language/ast"
 	"github.com/graphql-go/graphql/language/parser"
 )
@@ -633,8 +634,8 @@ func Build(st Store, opts Options) (graphql.Schema, error) {
 		})
 
 		queryFields["get"+name] = &graphql.Field{
-			Type: modelType,
-			Args: graphql.FieldConfigArgument{"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}},
+			Type:    modelType,
+			Args:    graphql.FieldConfigArgument{"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}},
 			Resolve: resolveWithOverride("Query.get"+name, makeGet(st, name, opts.IDField, allFields)),
 		}
 		queryFields["list"+name] = &graphql.Field{
@@ -652,8 +653,8 @@ func Build(st Store, opts Options) (graphql.Schema, error) {
 		}
 		if !readonly { // spec/03 钩子 1：readonly → 只出 Query
 			mutationFields["create"+name] = &graphql.Field{
-				Type: modelType,
-				Args: graphql.FieldConfigArgument{"input": &graphql.ArgumentConfig{Type: graphql.NewNonNull(jsonScalar)}},
+				Type:    modelType,
+				Args:    graphql.FieldConfigArgument{"input": &graphql.ArgumentConfig{Type: graphql.NewNonNull(jsonScalar)}},
 				Resolve: resolveWithOverride("Mutation.create"+name, makeCreate(st, name)),
 			}
 			mutationFields["update"+name] = &graphql.Field{
@@ -665,8 +666,8 @@ func Build(st Store, opts Options) (graphql.Schema, error) {
 				Resolve: resolveWithOverride("Mutation.update"+name, makeUpdate(st, name, opts.IDField, allFields)),
 			}
 			mutationFields["delete"+name] = &graphql.Field{
-				Type: graphql.NewNonNull(graphql.Boolean),
-				Args: graphql.FieldConfigArgument{"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}},
+				Type:    graphql.NewNonNull(graphql.Boolean),
+				Args:    graphql.FieldConfigArgument{"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}},
 				Resolve: resolveWithOverride("Mutation.delete"+name, makeDelete(st, name, opts.IDField)),
 			}
 		}
@@ -830,7 +831,24 @@ func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 			VariableValues: body.Variables,
 			OperationName:  body.OperationName,
 		})
+		// spec/04：执行期错误统一补 extensions.code（去 ERR_ 前缀），权限类（含同档 NoContext）
+		// 固定 FORBIDDEN 且整响应 HTTP 403 —— 与 node/py 同规则同语义。
+		forbidden := false
+		for i := range result.Errors {
+			msg := result.Errors[i].Message
+			if strings.HasPrefix(msg, "ERR_PERMISSION:") || strings.HasPrefix(msg, "ERR_NO_CONTEXT:") {
+				forbidden = true
+				setErrorCode(&result.Errors[i], "FORBIDDEN")
+				continue
+			}
+			if code := stableErrorCode(msg); code != "" {
+				setErrorCode(&result.Errors[i], code)
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
+		if forbidden {
+			w.WriteHeader(http.StatusForbidden)
+		}
 		_ = json.NewEncoder(w).Encode(result)
 	}
 }
@@ -844,4 +862,33 @@ func isPermissionError(err error) bool {
 // core 稳定前缀 ERR_NO_CONTEXT:）⇒ 403。
 func isNoContextError(err error) bool {
 	return err != nil && strings.HasPrefix(err.Error(), "ERR_NO_CONTEXT:")
+}
+
+// setErrorCode 补 extensions.code（保留已有 extensions 其它键；已有 code 不覆盖）。
+func setErrorCode(e *gqlerrors.FormattedError, code string) {
+	ex := e.Extensions
+	if ex == nil {
+		ex = map[string]interface{}{}
+	}
+	if _, ok := ex["code"]; !ok {
+		ex["code"] = code
+	}
+	e.Extensions = ex
+}
+
+// stableErrorCode spec/04：非权限错误的稳定 machine code = message 的 `ERR_<CODE>:` 前缀去 `ERR_`；
+// 无前缀 / 前缀非全大写 / `ERR_PERMISSION` 一律返回空串（权限类走 FORBIDDEN 分支，不在此改写）。
+func stableErrorCode(message string) string {
+	if !strings.HasPrefix(message, "ERR_") {
+		return ""
+	}
+	head, _, ok := strings.Cut(message, ":")
+	if !ok {
+		return ""
+	}
+	code := strings.TrimPrefix(head, "ERR_")
+	if code == "" || code == "PERMISSION" || code != strings.ToUpper(code) {
+		return ""
+	}
+	return code
 }
