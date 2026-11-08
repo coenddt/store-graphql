@@ -392,10 +392,14 @@ def build_graphql_schema(
     overrides=None,
     extensions=None,
     id_field="_id",
+    include_archived=False,
 ):
     overrides = dict(overrides or {})
     extensions = dict(extensions or {})
-    names = filter_reserved(filter_archived(resources if resources is not None else store.list()))
+    # spec/01：默认过滤归档表；include_archived=True 为显式开关（点名要看归档的人能拿到）。
+    # `__` 保留名过滤不受该开关影响。
+    raw_names = resources if resources is not None else store.list()
+    names = filter_reserved(raw_names if include_archived else filter_archived(raw_names))
 
     query_fields = {}
     mutation_fields = {}
@@ -529,7 +533,7 @@ def _error_payload(err):
 
 
 def _forbidden_payload(err):
-    """权限类错误呈现（spec/04）：HTTP 403 + `extensions.code = FORBIDDEN`；message 原样保留前缀。"""
+    """权限类错误呈现（spec/04）：执行期 HTTP 200 + `extensions.code = FORBIDDEN`；message 原样保留前缀。"""
     formatted = dict(err.formatted)
     extensions = dict(formatted.get("extensions") or {})
     extensions["code"] = "FORBIDDEN"
@@ -552,6 +556,7 @@ def create_app(
     overrides=None,
     extensions=None,
     id_field="_id",
+    include_archived=False,
     max_query_depth=None,
     max_query_fields=None,
     introspection=True,
@@ -599,6 +604,7 @@ def create_app(
         overrides=overrides,
         extensions=extensions,
         id_field=id_field,
+        include_archived=include_archived,
     )
     if permission_error is None:
         permission_error = getattr(store, "PermissionError", None)
@@ -675,7 +681,7 @@ def create_app(
                         "errors": [
                             {
                                 "message": f"ERR_DEPTH:查询深度 {depth} 超过上限 {depth_limit}",
-                                "extensions": {"code": "DEPTH"},
+                                "extensions": {"code": "ERR_DEPTH", "normalizedCode": "DEPTH"},
                             }
                         ]
                     },
@@ -688,7 +694,7 @@ def create_app(
                         "errors": [
                             {
                                 "message": "ERR_INTROSPECTION:introspection 已禁用",
-                                "extensions": {"code": "INTROSPECTION"},
+                                "extensions": {"code": "ERR_INTROSPECTION", "normalizedCode": "INTROSPECTION"},
                             }
                         ]
                     },
@@ -700,7 +706,7 @@ def create_app(
                         "errors": [
                             {
                                 "message": f"ERR_COMPLEXITY:查询字段数 {usage['fields']} 超过上限 {fields_limit}",
-                                "extensions": {"code": "COMPLEXITY"},
+                                "extensions": {"code": "ERR_COMPLEXITY", "normalizedCode": "COMPLEXITY"},
                             }
                         ]
                     },
@@ -719,14 +725,13 @@ def create_app(
             )
         payload = {"data": result.data}
         if result.errors:
-            # spec/04：权限类（含同档 NoContext）⇒ HTTP 403 + code FORBIDDEN（与 node 对齐）；
-            # 其余错误保持 200 + 原样透出（仅补 extensions.code）。
-            forbidden = any(_is_permission_class(e, permission_error) for e in result.errors)
+            # spec/04：执行期权限类（含同档 NoContext）保持 GraphQL over HTTP 的 200，
+            # 靠 extensions.code = FORBIDDEN 区分（不按状态码分叉）；其余错误仅补 extensions.code。
             payload["errors"] = [
                 _forbidden_payload(e) if _is_permission_class(e, permission_error) else _error_payload(e)
                 for e in result.errors
             ]
-            return JSONResponse(payload, status_code=403 if forbidden else 200)
+            return JSONResponse(payload)
         return JSONResponse(payload)
 
     return app

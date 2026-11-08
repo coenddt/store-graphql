@@ -7,15 +7,18 @@
 
 ## 资源过滤（与 store-api 三端逐字一致）
 
-`XxxDeleted` 且 `Xxx` 也在列表中 ⇒ 归档表，不生成任何类型与字段。`Options/Resources` 显式指定时仍套用同一过滤。
+`XxxDeleted` 且 `Xxx` 也在列表中 ⇒ 归档表，不生成任何类型与字段。`Options/Resources` 显式指定时默认仍套用同一过滤。
+
+- **显式开关**：`includeArchived`（node `includeArchived` / py `include_archived` / go `Options.IncludeArchived`）默认 `false`；置 `true` 时跳过归档过滤，点名要看归档表的下游可拿到（既有默认行为不变）。
 
 ## 保留名过滤（GraphQL 皮专有）
 
 GraphQL 规范把 `__` 前缀保留给 introspection，故凡以 `__` 开头的模型名一律**跳过注册**（不报错、不降级为其他类型）——core 控制面内建模型（`__workflowRun`、`__schemaDef`、`__workflowDef`、`__feedback`）因此不会进入公开类型空间。`Options/Resources` 显式指定时套用同一过滤。
 
-- 三端语义一致：node `filterReserved` / py `filter_reserved` / go `filterReserved`（顺序：先归档过滤，再保留名过滤）
+- 三端语义一致：node `filterReserved` / py `filter_reserved` / go `filterReserved`（顺序：先归档过滤，再保留名过滤；`includeArchived=true` 时跳过前者）
 - 该过滤仅限 GraphQL 皮；REST / gRPC / MCP 不套用（其资源面不生成 GraphQL 类型，`__` 名无冲突）
 - 与归档过滤同档：属声明式排除，静默跳过；不视为守卫拦截，故不产生告警事件
+- **`__` 过滤不受 `includeArchived` 开关影响**（GraphQL 规范硬约束，无条件生效）
 
 ## 类型映射（defn `fields.*.type` → GraphQL 输出类型）
 

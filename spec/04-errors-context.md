@@ -34,10 +34,12 @@
 ## 错误呈现（node：Yoga 掩码默认）
 
 - **默认原样透出 message**（与 py / go 一致，符合本 spec 首节「原样透传，不吞不改写」）——node 经 Yoga `maskedErrors.maskError` 实现；py/go 执行器本就原样透出，故本项为三端 parity
-- **权限类错误**（core 稳定前缀 `ERR_PERMISSION:`，或权限类同档的 `NoContext`：主机 `NoContextError` machine code `no_context` / core 前缀 `ERR_NO_CONTEXT:`）⇒ HTTP **403** + `extensions.code = 'FORBIDDEN'`；message **原样保留前缀**（前缀剥离属展示层选择，禁写死进适配层）。**py / go 与 node 同语义**：执行期解析到的权限类错误同样返回 403 + `FORBIDDEN`，不得以 HTTP 200 静默承载。
-- **`extensions.code` 统一规则**：所有稳定 machine code 一律取「message 的 `ERR_` 稳定前缀去掉 `ERR_`」——
-  业务错误 `ERR_NOT_FOUND:` ⇒ `NOT_FOUND`，请求级守卫 `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:`
-  ⇒ `DEPTH` / `COMPLEXITY` / `INTROSPECTION`；唯一例外是权限类 ⇒ 固定 `FORBIDDEN`（语义级归类，不沿用 `PERMISSION`）。
+- **权限类错误**（core 稳定前缀 `ERR_PERMISSION:`，或权限类同档的 `NoContext`：主机 `NoContextError` machine code `no_context` / core 前缀 `ERR_NO_CONTEXT:`）⇒ HTTP **200** + `extensions.code = 'FORBIDDEN'`；message **原样保留前缀**（前缀剥离属展示层选择，禁写死进适配层）。**py / go 与 node 同语义**：执行期解析到的权限类错误统一 200 + `FORBIDDEN`，三端一个口径（GraphQL over HTTP 里执行期错误本就是 200，靠 `extensions.code` 区分）。
+- **`extensions.code` 规则（兼容化）**：业务错误的稳定 machine code 取「message 的 `ERR_` 稳定前缀去掉 `ERR_`」——
+  业务错误 `ERR_NOT_FOUND:` ⇒ `NOT_FOUND`；权限类 ⇒ 固定 `FORBIDDEN`（语义级归类，不沿用 `PERMISSION`）。
+  **请求级守卫保留旧码**：`ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:` 的 `extensions.code` 仍为
+  `ERR_DEPTH` / `ERR_COMPLEXITY` / `ERR_INTROSPECTION`（不惊动按旧值匹配的调用方），另置
+  `extensions.normalizedCode` = `DEPTH` / `COMPLEXITY` / `INTROSPECTION` 承载规范化码。
   **`message` 始终保留原前缀**。三端（node / py / go）按此同一规则产出，禁在守卫分支自行拼 `ERR_` 前缀。
 - 覆盖口子：`maskError` 单独覆盖掩码函数；`maskedErrors` 直通 Yoga（对外部署可传 Yoga 默认掩码或自定策略，见 [DEPLOYMENT.md](../DEPLOYMENT.md)）
 
@@ -70,14 +72,14 @@
 
 - 算法三端同构：**深度 = 从 operation 顶层 selectionSet 起的最大字段嵌套层数**（顶层字段为第 1 层；`InlineFragment` 原地展开；`FragmentSpread` 按 document 的 fragment 定义递归，已访问集合防环）；取所有 operation 的最大值
 - 上限 **`MAX_QUERY_DEPTH = 10`**（合法业务嵌套 2~4 层：模型→关系→关系，余量充足；常量可调，先改本 spec 再三端同步）
-- 超限 ⇒ **HTTP 400**，errors 首条 message 带稳定前缀 **`ERR_DEPTH:`**（请求级校验失败，区别于执行期错误的 200 + errors；node 经 Yoga 插件 `onExecute` 抛 `GraphQLError` + `extensions.http.status`，py/go 在执行前独立 parse 检查）
+- 超限 ⇒ **HTTP 400**，errors 首条 message 带稳定前缀 **`ERR_DEPTH:`**，`extensions.code = 'ERR_DEPTH'` + `extensions.normalizedCode = 'DEPTH'`（请求级校验失败，区别于执行期错误的 200 + errors；node 经 Yoga 插件 `onExecute` 抛 `GraphQLError` + `extensions.http.status`，py/go 在执行前独立 parse 检查）
 - 语法错误不在此拦截（维持执行器原路径 200 + errors），双 parse 成本微秒级（py/go），如实标注
 
 | 攻击面 | v0 状态 | 责任边界 |
 |---|---|---|
 | 查询深度攻击 | **已设限**（本节：深度 10，超限 400 + `ERR_DEPTH:`） | 部署侧反代限流仍建议叠加 |
-| 查询复杂度（字段数） | **已设限**：`MAX_QUERY_FIELDS = 300`（AST 字段节点总数，fragment 展开计入、防环；超限 400 + `ERR_COMPLEXITY:`）。**别名不单列**——别名是字段的属性，字段计数已覆盖别名堆叠 | 基于权重的 cost 分析列 v2；`maxQueryFields` 可覆盖（0 = 默认） |
-| Introspection 泄露 | **可配置**：默认开启（文档/codegen 依赖）；`introspection: false` 时含 `__schema`/`__type` 字段的请求 ⇒ 400 + `ERR_INTROSPECTION:`（`__typename` 放行，无泄露面） | 对外部署建议关闭 + 网关层兜底；开关与网关双保险见 [DEPLOYMENT.md](../DEPLOYMENT.md) |
+| 查询复杂度（字段数） | **已设限**：`MAX_QUERY_FIELDS = 300`（AST 字段节点总数，fragment 展开计入、防环；超限 400 + `ERR_COMPLEXITY:`，`extensions.code='ERR_COMPLEXITY'` + `normalizedCode='COMPLEXITY'`）。**别名不单列**——别名是字段的属性，字段计数已覆盖别名堆叠 | 基于权重的 cost 分析列 v2；`maxQueryFields` 可覆盖（0 = 默认） |
+| Introspection 泄露 | **可配置**：默认开启（文档/codegen 依赖）；`introspection: false` 时含 `__schema`/`__type` 字段的请求 ⇒ 400 + `ERR_INTROSPECTION:`（`extensions.code='ERR_INTROSPECTION'` + `normalizedCode='INTROSPECTION'`；`__typename` 放行，无泄露面） | 对外部署建议关闭 + 网关层兜底；开关与网关双保险见 [DEPLOYMENT.md](../DEPLOYMENT.md) |
 | 错误信息泄露（CWE-209） | spec 决策：message 原样透传（内网工具定位；自动反馈原则优先） | 对外部署在网关层做错误映射；错误前缀告警表见 [DEPLOYMENT.md](../DEPLOYMENT.md) |
 | 批量查询（batching） | 关闭：三端单请求单文档 | — |
 | CSRF | GET 无副作用（仅文档页）；POST JSON 非简单请求，跨站被 CORS 预检拦截 | — |

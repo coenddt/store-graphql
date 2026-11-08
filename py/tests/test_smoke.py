@@ -115,6 +115,14 @@ def test_schema_filters_reserved_builtin_models():
     archived = build_graphql_schema(store, resources=["User", "UserDeleted"])
     assert archived.get_type("User") is not None
     assert archived.get_type("UserDeleted") is None
+    # spec/01：显式开关 include_archived=True 才放行归档表（默认仍过滤）
+    with_archived = build_graphql_schema(
+        store,
+        resources=["User", "UserDeleted", "__workflowRun"],
+        include_archived=True,
+    )
+    assert with_archived.get_type("UserDeleted") is not None
+    assert with_archived.get_type("__workflowRun") is None  # `__` 过滤不受开关影响
 
 
 def test_sdl_generation():
@@ -304,7 +312,9 @@ def test_query_depth_guard():
     deep3 = client.post("/graphql", json={"query": "{ listUser { profile { bio } } }"})
     assert deep3.status_code == 400
     assert "ERR_DEPTH:" in deep3.json()["errors"][0]["message"]
-    assert deep3.json()["errors"][0]["extensions"]["code"] == "DEPTH"  # 统一规则：去 ERR_ 前缀
+    # 旧值原地不动 + 规范化码另置（兼容既有按 ERR_ 前缀匹配的调用方）
+    assert deep3.json()["errors"][0]["extensions"]["code"] == "ERR_DEPTH"
+    assert deep3.json()["errors"][0]["extensions"]["normalizedCode"] == "DEPTH"
 
 
 def test_complexity_and_introspection_guard():
@@ -326,11 +336,13 @@ def test_complexity_and_introspection_guard():
     assert post("{ listUser { _id } }").status_code == 200
     over = post("{ listUser { _id name } }")
     assert over.status_code == 400 and "ERR_COMPLEXITY:" in over.json()["errors"][0]["message"]
-    assert over.json()["errors"][0]["extensions"]["code"] == "COMPLEXITY"
+    assert over.json()["errors"][0]["extensions"]["code"] == "ERR_COMPLEXITY"
+    assert over.json()["errors"][0]["extensions"]["normalizedCode"] == "COMPLEXITY"
     assert post("{ __typename }").status_code == 200
     intro = post("{ __schema { queryType { name } } }")
     assert intro.status_code == 400 and "ERR_INTROSPECTION:" in intro.json()["errors"][0]["message"]
-    assert intro.json()["errors"][0]["extensions"]["code"] == "INTROSPECTION"
+    assert intro.json()["errors"][0]["extensions"]["code"] == "ERR_INTROSPECTION"
+    assert intro.json()["errors"][0]["extensions"]["normalizedCode"] == "INTROSPECTION"
 
 
 def test_override_and_extend():

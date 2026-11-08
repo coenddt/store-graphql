@@ -4,22 +4,23 @@
 
 ### Fixed
 
-- **py 执行期权限错误与 node 对齐**：解析器抛出的权限类错误（`PermissionError` 类型 / `ERR_PERMISSION:` /
-  同档 `ERR_NO_CONTEXT:` / `no_context`）由 HTTP 200 改为 **403 + `extensions.code = "FORBIDDEN"`**，
-  message 原样保留前缀；其余执行错误仍为 200。
-- **`extensions.code` 规则统一**：请求级守卫的 `extensions.code` 由 `ERR_DEPTH` / `ERR_COMPLEXITY` /
-  `ERR_INTROSPECTION` 改为 `DEPTH` / `COMPLEXITY` / `INTROSPECTION`（与业务错误一致：稳定前缀去 `ERR_`），
-  message 仍保留 `ERR_` 前缀。node / py / go 同步。
+- **执行期权限错误三端统一 200 + `extensions.code = "FORBIDDEN"`**：解析器抛出的权限类错误
+  （`PermissionError` 类型 / `ERR_PERMISSION:` / 同档 `ERR_NO_CONTEXT:` / `no_context`）不再按状态码分叉
+  （node 由 403 回调 200，py / go 维持 200）。依据 GraphQL over HTTP：执行期错误本就 200，靠
+  `extensions.code` 区分；message 原样保留前缀。`contextProvider` / `policyProvider` 预执行层失败
+  仍走既有 403/401。
+- **守卫 `extensions.code` 保留旧值 + 新增 `normalizedCode`**：请求级守卫的 `extensions.code` 仍为
+  `ERR_DEPTH` / `ERR_COMPLEXITY` / `ERR_INTROSPECTION`（不惊动按旧值匹配的调用方），另置
+  `extensions.normalizedCode` = `DEPTH` / `COMPLEXITY` / `INTROSPECTION`；message 仍保留 `ERR_` 前缀。
+  node / py / go 同步。
 - **go 补 `__` 保留名过滤**：`Build` 此前无过滤，`__workflowRun` 等 core 控制面内建模型会被
   `graphql.NewObject` 注册进公开类型空间（graphql-go v0.8.1 只校验名字正则，不校验 `__` 前缀）。
   现按 spec/01 与 node / py 同语义：`__` 前缀模型静默跳过注册（不报错），显式 `Options.Resources`
   同样过滤；过滤顺序为归档过滤 → 保留名过滤。
-- **显式 `resources` 未套归档过滤（行为修正，非新特性）**：node / py 原实现为
-  `filterReserved(resources || filterArchived(store.list()))`，显式传入 `resources` 时**跳过**归档过滤，
-  与 spec/01「显式指定时仍套用同一过滤」及 go 实现不符。现统一为
-  `filterReserved(filterArchived(resources ?? store.list()))`，三端一致：显式点名归档表
-  （如 `UserDeleted`）不再生成类型与字段。此为对既有契约（spec/01）的兑现修正，
-  不新增开关、不引入新特性。
+- **显式 `resources` 归档过滤：默认仍过滤 + 新增 `includeArchived` 开关**：node / py / go 统一为
+  默认 `filterReserved(filterArchived(resources ?? store.list()))`（既有默认行为不变）；仅当
+  `includeArchived: true`（py `include_archived=True` / go `Options.IncludeArchived=true`）时跳过归档过滤，
+  点名要看归档表的调用方可拿到。`__` 保留名过滤不受该开关影响。
 
 ## 0.6.0 (2026-11-02)
 

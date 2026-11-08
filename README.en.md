@@ -96,15 +96,16 @@ The adapter never re-implements permissions. A `contextFactory` (Node) or `conte
 | Situation | HTTP on Node | `errors[0]` | `data` |
 |---|---|---|---|
 | Core error prefixed `ERR_NOT_FOUND:` | 200 | message unchanged, `extensions.code = "NOT_FOUND"` | field is `null` |
-| Permission error `ERR_PERMISSION:` | 403 | message unchanged, `extensions.code = "FORBIDDEN"` | absent |
-| Missing context, `no_context` / `ERR_NO_CONTEXT:` | 403 | message unchanged | absent |
-| Any other context-hook failure | 401 | message unchanged | absent |
-| Depth, field-count or introspection guard | 400 | message keeps `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:`; `extensions.code = "DEPTH"` / `"COMPLEXITY"` / `"INTROSPECTION"` (uniform `ERR_` stripping) | absent |
+| Permission error `ERR_PERMISSION:` | 200 | message unchanged, `extensions.code = "FORBIDDEN"` | absent |
+| Missing context, `no_context` / `ERR_NO_CONTEXT:` | 200 | message unchanged, `extensions.code = "FORBIDDEN"` | absent |
+| Any other context-hook failure (pre-execution) | 401 | message unchanged | absent |
+| Depth, field-count or introspection guard | 400 | message keeps `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:`; `extensions.code` keeps the legacy `"ERR_DEPTH"` / `"ERR_COMPLEXITY"` / `"ERR_INTROSPECTION"`, plus `extensions.normalizedCode = "DEPTH"` / `"COMPLEXITY"` / `"INTROSPECTION"` | absent |
 
-This is the Node reference mapping from `spec/04`. Python's `create_app` now agrees with Node on
-execution-time permission errors (403 + `FORBIDDEN`); other execution errors stay in a 200 payload.
-`context_provider` failures use the 403/401 split, and guard responses emit `extensions.code` by the
-same "strip `ERR_`" rule. A `getX` miss is not an error: it returns `null`.
+This is the Node reference mapping from `spec/04`. Python and Go agree with Node on
+execution-time permission errors (200 + `FORBIDDEN`; execution errors are 200 in GraphQL over HTTP,
+discriminated by `extensions.code`); other execution errors stay in a 200 payload.
+`context_provider` / `policy_provider` pre-execution failures keep the 403/401 split, and guard
+responses emit the legacy `extensions.code` plus `normalizedCode`. A `getX` miss is not an error: it returns `null`.
 
 ## Run it
 

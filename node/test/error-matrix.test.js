@@ -73,13 +73,13 @@ test('非权限 ERR_* 前缀补 extensions.code（message 原样保留）', asyn
   assert.ok(err.message.startsWith('ERR_NOT_FOUND:'), err.message);
 });
 
-test('越权错误保持原权限 code / message（不被非权限映射改写）', async () => {
+test('越权错误：执行期 HTTP 200 + FORBIDDEN（GraphQL over HTTP 执行期错误口径）', async () => {
   const { yoga } = createYoga(
     makeQueryStore(() => new Error('ERR_PERMISSION:RBAC:无权写入')),
     { contextFactory: async () => ({ user: 'u1' }) },
   );
   const res = await yoga(mkQueryRequest('{ listUser { _id } }'));
-  assert.equal(res.status, 403);
+  assert.equal(res.status, 200);
   const err = (await res.json()).errors[0];
   assert.equal(err.extensions.code, 'FORBIDDEN');
   assert.equal(err.message, 'ERR_PERMISSION:RBAC:无权写入');

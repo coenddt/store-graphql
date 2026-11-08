@@ -163,6 +163,9 @@ type Options struct {
 	MaxQueryFields int
 	// DisableIntrospection spec/04：true 时含 __schema/__type 的请求 ⇒ 400 + ERR_INTROSPECTION:。
 	DisableIntrospection bool
+	// IncludeArchived spec/01：true 时跳过归档表过滤（默认 false = 过滤）。
+	// `__` 保留名过滤不受该开关影响。
+	IncludeArchived bool
 	// ContextProvider spec/04：每请求上下文钩子。nil 时不注入。
 	ContextProvider func(r *http.Request) (*gostore.Context, error)
 }
@@ -610,8 +613,12 @@ func Build(st Store, opts Options) (graphql.Schema, error) {
 			byName[n] = defn
 		}
 	}
-	// spec/01：先归档过滤，再 `__` 保留名过滤（后者对显式 Resources 同样生效）。
-	names = filterReserved(FilterArchived(names))
+	// spec/01：默认归档过滤；IncludeArchived=true 为显式开关（点名要看归档的人能拿到）。
+	// `__` 保留名过滤始终生效。
+	if !opts.IncludeArchived {
+		names = FilterArchived(names)
+	}
+	names = filterReserved(names)
 
 	queryFields := graphql.Fields{}
 	mutationFields := graphql.Fields{}
@@ -806,20 +813,20 @@ func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 				if d := queryDepth(doc); d > depthLimit {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadRequest)
-					_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_DEPTH:查询深度 %d 超过上限 %d","extensions":{"code":"DEPTH"}}]}`, d, depthLimit)
+					_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_DEPTH:查询深度 %d 超过上限 %d","extensions":{"code":"ERR_DEPTH","normalizedCode":"DEPTH"}}]}`, d, depthLimit)
 					return
 				}
 				fields, introUsed := queryFieldCount(doc)
 				if introUsed && opts.DisableIntrospection {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadRequest)
-					_, _ = w.Write([]byte(`{"errors":[{"message":"ERR_INTROSPECTION:introspection 已禁用","extensions":{"code":"INTROSPECTION"}}]}`))
+					_, _ = w.Write([]byte(`{"errors":[{"message":"ERR_INTROSPECTION:introspection 已禁用","extensions":{"code":"ERR_INTROSPECTION","normalizedCode":"INTROSPECTION"}}]}`))
 					return
 				}
 				if fields > fieldsLimit {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadRequest)
-					_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_COMPLEXITY:查询字段数 %d 超过上限 %d","extensions":{"code":"COMPLEXITY"}}]}`, fields, fieldsLimit)
+					_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_COMPLEXITY:查询字段数 %d 超过上限 %d","extensions":{"code":"ERR_COMPLEXITY","normalizedCode":"COMPLEXITY"}}]}`, fields, fieldsLimit)
 					return
 				}
 			}
@@ -832,12 +839,10 @@ func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 			OperationName:  body.OperationName,
 		})
 		// spec/04：执行期错误统一补 extensions.code（去 ERR_ 前缀），权限类（含同档 NoContext）
-		// 固定 FORBIDDEN 且整响应 HTTP 403 —— 与 node/py 同规则同语义。
-		forbidden := false
+		// 固定 FORBIDDEN；执行期错误保持 HTTP 200（GraphQL over HTTP 口径），不按状态码分叉。
 		for i := range result.Errors {
 			msg := result.Errors[i].Message
 			if strings.HasPrefix(msg, "ERR_PERMISSION:") || strings.HasPrefix(msg, "ERR_NO_CONTEXT:") {
-				forbidden = true
 				setErrorCode(&result.Errors[i], "FORBIDDEN")
 				continue
 			}
@@ -846,9 +851,6 @@ func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if forbidden {
-			w.WriteHeader(http.StatusForbidden)
-		}
 		_ = json.NewEncoder(w).Encode(result)
 	}
 }

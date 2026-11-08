@@ -98,13 +98,15 @@ Node 与 Python 都会展开 fragment、在序列化时求值 `@skip` / `@includ
 | 情形 | Node 上的 HTTP | `errors[0]` | `data` |
 |---|---|---|---|
 | core 错误带 `ERR_NOT_FOUND:` 前缀 | 200 | message 不变，`extensions.code = "NOT_FOUND"` | 字段为 `null` |
-| 权限错误 `ERR_PERMISSION:` | 403 | message 不变，`extensions.code = "FORBIDDEN"` | 缺席 |
-| 上下文缺失 `no_context` / `ERR_NO_CONTEXT:` | 403 | message 不变 | 缺席 |
-| 其余 context hook 失败 | 401 | message 不变 | 缺席 |
-| 深度、字段数或 introspection 守卫 | 400 | message 带 `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:`；`extensions.code = "DEPTH"` / `"COMPLEXITY"` / `"INTROSPECTION"`（统一去 `ERR_` 前缀） | 缺席 |
+| 权限错误 `ERR_PERMISSION:` | 200 | message 不变，`extensions.code = "FORBIDDEN"` | 缺席 |
+| 上下文缺失 `no_context` / `ERR_NO_CONTEXT:` | 200 | message 不变，`extensions.code = "FORBIDDEN"` | 缺席 |
+| 其余 context hook 失败（预执行层） | 401 | message 不变 | 缺席 |
+| 深度、字段数或 introspection 守卫 | 400 | message 带 `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:`；`extensions.code` 保留旧值 `"ERR_DEPTH"` / `"ERR_COMPLEXITY"` / `"ERR_INTROSPECTION"`，另置 `extensions.normalizedCode = "DEPTH"` / `"COMPLEXITY"` / `"INTROSPECTION"` | 缺席 |
 
-这是 `spec/04` 的 Node 参考映射。Python 的 `create_app` 对执行期权限类错误与 Node 同义（403 + `FORBIDDEN`），
-其余执行错误放进 200 响应体；`context_provider` 失败套用 403/401 分流；请求守卫同样返回 400 且 `extensions.code` 按同一「去 `ERR_` 前缀」规则产出。`getX` 未命中不是错误：它返回 `null`。
+这是 `spec/04` 的 Node 参考映射。Python / Go 与 Node 同义：执行期权限类错误统一 200 + `FORBIDDEN`
+（GraphQL over HTTP 执行期错误本就是 200，靠 `extensions.code` 区分），其余执行错误放进 200 响应体；
+`context_provider` / `policy_provider` 预执行层失败仍套用 403/401 分流；请求守卫同样返回 400，
+`extensions.code` 保留 `ERR_` 旧值并另置 `normalizedCode`。`getX` 未命中不是错误：它返回 `null`。
 
 ## 跑起来
 

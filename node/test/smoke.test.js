@@ -106,6 +106,13 @@ test('schema 过滤：`__` 前缀控制面内建模型不得进 GraphQL schema�
   const archived = buildGraphQLSchema(store, { resources: ['User', 'UserDeleted'] });
   assert.ok(archived.getType('User'));
   assert.equal(archived.getType('UserDeleted'), undefined);
+  // spec/01：显式开关 includeArchived:true 才放行归档表（默认仍过滤）
+  const withArchived = buildGraphQLSchema(store, {
+    resources: ['User', 'UserDeleted', '__workflowRun'],
+    includeArchived: true,
+  });
+  assert.ok(withArchived.getType('UserDeleted'));
+  assert.equal(withArchived.getType('__workflowRun'), undefined); // `__` 过滤不受开关影响
 });
 
 test('SDL 自动生成：类型映射与生成面（spec/01）', async () => {
@@ -290,7 +297,9 @@ test('查询深度守卫：算法单元 + HTTP 层 400（spec/04）', async () =
   assert.equal(deep3.status, 400);
   const body = await deep3.json();
   assert.ok(body.errors[0].message.includes('ERR_DEPTH:'));
-  assert.equal(body.errors[0].extensions.code, 'DEPTH'); // 统一规则：去 ERR_ 前缀
+  // 旧值原地不动 + 规范化码另置（兼容既有按 ERR_ 前缀匹配的调用方）
+  assert.equal(body.errors[0].extensions.code, 'ERR_DEPTH');
+  assert.equal(body.errors[0].extensions.normalizedCode, 'DEPTH');
 });
 
 test('复杂度与 introspection 守卫（spec/04）', async () => {
@@ -316,7 +325,8 @@ test('复杂度与 introspection 守卫（spec/04）', async () => {
   assert.equal(over.status, 400);
   const overBody = await over.json();
   assert.ok(overBody.errors[0].message.includes('ERR_COMPLEXITY:'));
-  assert.equal(overBody.errors[0].extensions.code, 'COMPLEXITY');
+  assert.equal(overBody.errors[0].extensions.code, 'ERR_COMPLEXITY');
+  assert.equal(overBody.errors[0].extensions.normalizedCode, 'COMPLEXITY');
 
   // __typename 放行(无泄露面);__schema ⇒ 400 + ERR_INTROSPECTION:
   assert.equal((await post('{ __typename }')).status, 200);
@@ -324,7 +334,8 @@ test('复杂度与 introspection 守卫（spec/04）', async () => {
   assert.equal(intro.status, 400);
   const introBody = await intro.json();
   assert.ok(introBody.errors[0].message.includes('ERR_INTROSPECTION:'));
-  assert.equal(introBody.errors[0].extensions.code, 'INTROSPECTION');
+  assert.equal(introBody.errors[0].extensions.code, 'ERR_INTROSPECTION');
+  assert.equal(introBody.errors[0].extensions.normalizedCode, 'INTROSPECTION');
 });
 
 test('override / extend（spec/03 钩子 2、3）与未知路径校验', async () => {
@@ -395,7 +406,7 @@ test('graphqlPlugin GET 文档页', async () => {
   }
 });
 
-test('graphqlPlugin 错误呈现：权限错误 403 + FORBIDDEN，message 原样（spec/04）', async () => {
+test('graphqlPlugin 错误呈现：权限错误 200 + FORBIDDEN，message 原样（spec/04）', async () => {
   const app = await makeApp({
     store: makeMockStore(),
     overrides: {
@@ -406,7 +417,7 @@ test('graphqlPlugin 错误呈现：权限错误 403 + FORBIDDEN，message 原样
   });
   try {
     const res = await app.inject(gqlPost('/graphql', '{ listUser { _id } }'));
-    assert.equal(res.statusCode, 403);
+    assert.equal(res.statusCode, 200);
     const err = res.json().errors[0];
     assert.equal(err.extensions.code, 'FORBIDDEN');
     assert.equal(err.message, 'ERR_PERMISSION:无访问权限');

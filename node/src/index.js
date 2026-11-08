@@ -337,7 +337,10 @@ function buildGraphQLSchema(store, opts = {}) {
   const overrides = opts.overrides || {};
   const extensions = opts.extensions || {};
 
-  const names = filterReserved(filterArchived(opts.resources ?? store.list()));
+  // spec/01：默认过滤归档表；`includeArchived: true` 为显式开关（点名要看归档的人能拿到）。
+  // `__` 保留名过滤不受该开关影响。
+  const rawNames = opts.resources ?? store.list();
+  const names = filterReserved(opts.includeArchived ? rawNames : filterArchived(rawNames));
   const queryFields = {};
   const mutationFields = {};
   const usedOverrideKeys = new Set();
@@ -454,7 +457,8 @@ function stableErrorCode(message) {
 
 // spec/04：错误呈现默认——非权限错误原样透出（parity py/go，符合本 spec「原样透传」）；
 // `ERR_*` 前缀错误额外补 extensions.code（如 ERR_NOT_FOUND → NOT_FOUND），message 原文保留；
-// 权限类错误附加 HTTP 403 + code FORBIDDEN，message 原样（剥前缀属展示层，走 opts.maskError）
+// 权限类错误执行期仍走 GraphQL over HTTP 的 200，靠 extensions.code = FORBIDDEN 区分
+// （不设 extensions.http.status；剥前缀属展示层，走 opts.maskError）
 function defaultMaskError(error, message, isDev) {
   const orig = (error && error.originalError) || error;
   if (!isPermissionClass(error) && !isPermissionClass(orig)) {
@@ -467,7 +471,9 @@ function defaultMaskError(error, message, isDev) {
       originalError: orig,
       extensions: {
         ...((error && error.extensions) || {}),
-        code,
+        // 已有 code（如守卫的旧值 ERR_DEPTH）原地不动，只补缺失的；
+        // 规范化码另置 normalizedCode，由守卫自己写入。
+        code: (error && error.extensions && error.extensions.code) || code,
       },
     });
   }
@@ -478,7 +484,6 @@ function defaultMaskError(error, message, isDev) {
     extensions: {
       ...((error && error.extensions) || {}),
       code: 'FORBIDDEN',
-      http: { status: 403 },
     },
   });
 }
@@ -541,18 +546,18 @@ function createYoga(store, opts = {}) {
           const d = queryDepthOf(args.document);
           if (d > depthLimit) {
             throw new GraphQLError(`ERR_DEPTH:查询深度 ${d} 超过上限 ${depthLimit}`, {
-              extensions: { code: 'DEPTH', http: { status: 400 } },
+              extensions: { code: 'ERR_DEPTH', normalizedCode: 'DEPTH', http: { status: 400 } },
             });
           }
           const { fields, introspectionUsed } = queryFieldCount(args.document);
           if (introspectionUsed && !introspectionEnabled) {
             throw new GraphQLError('ERR_INTROSPECTION:introspection 已禁用', {
-              extensions: { code: 'INTROSPECTION', http: { status: 400 } },
+              extensions: { code: 'ERR_INTROSPECTION', normalizedCode: 'INTROSPECTION', http: { status: 400 } },
             });
           }
           if (fields > fieldsLimit) {
             throw new GraphQLError(`ERR_COMPLEXITY:查询字段数 ${fields} 超过上限 ${fieldsLimit}`, {
-              extensions: { code: 'COMPLEXITY', http: { status: 400 } },
+              extensions: { code: 'ERR_COMPLEXITY', normalizedCode: 'COMPLEXITY', http: { status: 400 } },
             });
           }
         },

@@ -87,12 +87,12 @@ def test_non_permission_err_prefix_maps_to_extensions_code():
     assert err["message"].startswith("ERR_NOT_FOUND:")
 
 
-def test_permission_error_returns_403_forbidden():
-    """G1：执行期权限错误与 node 对齐——HTTP 403 + extensions.code=FORBIDDEN，message 原样。"""
+def test_permission_error_returns_200_forbidden():
+    """执行期权限错误：HTTP 200 + extensions.code=FORBIDDEN，message 原样（GraphQL over HTTP 执行期口径）。"""
     res = _query_client(_PermissionStore()).post(
         "/graphql", json={"query": "{ listUser { _id } }"}
     )
-    assert res.status_code == 403
+    assert res.status_code == 200
     err = res.json()["errors"][0]
     assert err["message"] == "ERR_PERMISSION:RBAC:无权写入"
     assert err["extensions"]["code"] == "FORBIDDEN"

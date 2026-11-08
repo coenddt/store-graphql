@@ -255,6 +255,23 @@ func TestReservedNameFiltering(t *testing.T) {
 			t.Fatalf("%s: User 应正常保留", name)
 		}
 	}
+
+	// spec/01：显式开关 IncludeArchived=true 才放行归档表（默认仍过滤）；
+	// `__` 保留名过滤不受开关影响。
+	included, err := Build(newMockStore(t), Options{
+		Schemas:         []map[string]any{user, archived, internal},
+		Resources:       []string{"User", "UserDeleted", "__workflowRun"},
+		IncludeArchived: true,
+	})
+	if err != nil {
+		t.Fatalf("IncludeArchived=true: Build 不应失败: %v", err)
+	}
+	if included.Type("UserDeleted") == nil {
+		t.Fatalf("IncludeArchived=true: 归档表应注册进类型空间")
+	}
+	if included.Type("__workflowRun") != nil {
+		t.Fatalf("IncludeArchived=true: `__` 保留名仍应被过滤")
+	}
 }
 
 func TestContextErrorClassification(t *testing.T) {
@@ -370,9 +387,12 @@ func TestQueryDepthGuard(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "ERR_DEPTH:") {
 		t.Fatalf("超限应带 ERR_DEPTH: 前缀: %s", rec.Body.String())
 	}
-	// spec/04 统一规则：extensions.code 去 ERR_ 前缀
-	if !strings.Contains(rec.Body.String(), `"code":"DEPTH"`) {
-		t.Fatalf("extensions.code 应为 DEPTH: %s", rec.Body.String())
+	// 旧值原地不动 + 规范化码另置（兼容既有按 ERR_ 前缀匹配的调用方）
+	if !strings.Contains(rec.Body.String(), `"code":"ERR_DEPTH"`) {
+		t.Fatalf("extensions.code 应为 ERR_DEPTH: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"normalizedCode":"DEPTH"`) {
+		t.Fatalf("extensions.normalizedCode 应为 DEPTH: %s", rec.Body.String())
 	}
 }
 
@@ -404,12 +424,20 @@ func TestComplexityAndIntrospectionGuard(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ERR_COMPLEXITY:") {
 		t.Fatalf("超字段上限应 400 + ERR_COMPLEXITY:,实际 %d %s", rec.Code, rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), `"code":"ERR_COMPLEXITY"`) ||
+		!strings.Contains(rec.Body.String(), `"normalizedCode":"COMPLEXITY"`) {
+		t.Fatalf("复杂度守卫应保留旧码并新增规范化码: %s", rec.Body.String())
+	}
 	if rec := post(`{"query":"{ __typename }"}`); rec.Code != http.StatusOK {
 		t.Fatalf("__typename 应放行,实际 %d", rec.Code)
 	}
 	rec = post(`{"query":"{ __schema { queryType { name } } }"}`)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ERR_INTROSPECTION:") {
 		t.Fatalf("禁用后 __schema 应 400 + ERR_INTROSPECTION:,实际 %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"code":"ERR_INTROSPECTION"`) ||
+		!strings.Contains(rec.Body.String(), `"normalizedCode":"INTROSPECTION"`) {
+		t.Fatalf("introspection 守卫应保留旧码并新增规范化码: %s", rec.Body.String())
 	}
 }
 
@@ -565,8 +593,9 @@ type errText struct{ msg string }
 func (e *errText) Error() string { return e.msg }
 
 // TestExecutionErrorPresentation 第二轮实测：执行期 core 稳定前缀错误的 HTTP 形态。
-// 改前（基线）：全部 HTTP 200 且 errors 无 extensions.code；权限类也未 403。
-// 改后：ERR_<CODE>: ⇒ extensions.code=<CODE>；权限类（含同档 NoContext）⇒ HTTP 403 + FORBIDDEN。
+// 改前（基线）：全部 HTTP 200 且 errors 无 extensions.code。
+// 改后：ERR_<CODE>: ⇒ extensions.code=<CODE>；权限类（含同档 NoContext）⇒ HTTP 200 + FORBIDDEN
+// （GraphQL over HTTP 执行期错误口径，不按状态码分叉）。
 func TestExecutionErrorPresentation(t *testing.T) {
 	cases := []struct {
 		msg      string
@@ -574,8 +603,8 @@ func TestExecutionErrorPresentation(t *testing.T) {
 		wantCode string
 	}{
 		{"ERR_NOT_FOUND:行不存在", http.StatusOK, "NOT_FOUND"},
-		{"ERR_PERMISSION:RBAC:无权写入", http.StatusForbidden, "FORBIDDEN"},
-		{"ERR_NO_CONTEXT:上下文缺失", http.StatusForbidden, "FORBIDDEN"},
+		{"ERR_PERMISSION:RBAC:无权写入", http.StatusOK, "FORBIDDEN"},
+		{"ERR_NO_CONTEXT:上下文缺失", http.StatusOK, "FORBIDDEN"},
 		{"ERR_RESOURCE_NOT_FOUND:资源无任何可读副本", http.StatusOK, "RESOURCE_NOT_FOUND"},
 		{"ERR_LIMIT:limit 超过上限 1000", http.StatusOK, "LIMIT"},
 		{"普通执行错误", http.StatusOK, ""},
