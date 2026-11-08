@@ -2,25 +2,67 @@
 
 ## Unreleased
 
+> 目标版本 **1.0.0**（未发布；版本号由发布流程统一 bump）。本轮采用「旧值原地不动 + 新增规范化字段」的
+> 兼容策略，破坏性变更只保留两条，均已单列在 `Breaking` 下。
+
+### Breaking
+
+#### 1. 显式 `resources` 也套归档过滤（默认过滤）
+
+- **改了什么**：此前显式传入 `options.resources` 时，归档表（`User` 存在时的 `UserDeleted`）会被直接注册进
+  类型空间；现统一为 `filterReserved(filterArchived(resources ?? store.list()))`，即**显式点名也默认过滤**。
+- **下游要动哪里**：显式传了 `UserDeleted` 之类归档表的调用方，默认将拿到「类型不存在」（查询报错 / 字段缺席）。
+  需要保留该能力时打开显式开关：node `storeGraphql(schema, { includeArchived: true })`、
+  py `build_graphql_schema(store, schemas, include_archived=True)`、go
+  `storegraphql.Options{IncludeArchived: true}`。开关注释见下 `Added`。
+
+#### 2. `__` 前缀模型不进公开类型空间（go 端补齐）
+
+- **改了什么**：go `Build` 此前无保留名过滤，`__workflowRun` 等 core 控制面内建模型会被
+  `graphql.NewObject` 注册进公开类型空间（graphql-go v0.8.1 只校验名字正则，不校验 `__` 前缀）；现与
+  node / py 同语义：`__` 前缀模型静默跳过注册（不报错），显式 `Options.Resources` 同样过滤。
+  过滤顺序固定为「归档过滤 → 保留名过滤」。
+- **下游要动哪里**：此前在 go 端能查询 `__` 前缀模型的调用方，该类型不再存在，查询会返回 schema 校验错误。
+  这类模型属 core 控制面，不应作为业务类型暴露，故不提供开关。
+
+### Added
+
+- **`includeArchived` 开关**（非破坏，默认关闭）：仅当显式开启时跳过归档过滤，点名要看归档表的调用方可拿到；
+  `__` 保留名过滤不受该开关影响。三语言写法：
+
+  ```javascript
+  // node
+  const schema = storeGraphql(store, { schemas, includeArchived: true });
+  ```
+
+  ```python
+  # py
+  schema = build_graphql_schema(store, schemas, include_archived=True)
+  ```
+
+  ```go
+  // go
+  schema, err := storegraphql.Build(store, storegraphql.Options{
+      Schemas:         schemas,
+      IncludeArchived: true,
+  })
+  ```
+
+- **`extensions.normalizedCode`**（非破坏，三端）：请求级守卫的 `extensions.code` 保留旧值
+  `ERR_DEPTH` / `ERR_COMPLEXITY` / `ERR_INTROSPECTION`，另置规范化值 `DEPTH` / `COMPLEXITY` /
+  `INTROSPECTION`。按旧值精确匹配的客户端不受影响；新客户端可只读 `normalizedCode`。
+- **go 执行期 `extensions.code`**（非破坏）：此前 go `Handler` 在 `graphql.Do` 后直接编码结果，执行期错误没有
+  `extensions.code`；现与 node / py 同规则，从错误 message 的 `ERR_<CODE>:` 前缀推导并注入（只增字段，
+  不删旧行为）。
+
 ### Fixed
 
 - **执行期权限错误三端统一 200 + `extensions.code = "FORBIDDEN"`**：解析器抛出的权限类错误
   （`PermissionError` 类型 / `ERR_PERMISSION:` / 同档 `ERR_NO_CONTEXT:` / `no_context`）不再按状态码分叉
   （node 由 403 回调 200，py / go 维持 200）。依据 GraphQL over HTTP：执行期错误本就 200，靠
   `extensions.code` 区分；message 原样保留前缀。`contextProvider` / `policyProvider` 预执行层失败
-  仍走既有 403/401。
-- **守卫 `extensions.code` 保留旧值 + 新增 `normalizedCode`**：请求级守卫的 `extensions.code` 仍为
-  `ERR_DEPTH` / `ERR_COMPLEXITY` / `ERR_INTROSPECTION`（不惊动按旧值匹配的调用方），另置
-  `extensions.normalizedCode` = `DEPTH` / `COMPLEXITY` / `INTROSPECTION`；message 仍保留 `ERR_` 前缀。
-  node / py / go 同步。
-- **go 补 `__` 保留名过滤**：`Build` 此前无过滤，`__workflowRun` 等 core 控制面内建模型会被
-  `graphql.NewObject` 注册进公开类型空间（graphql-go v0.8.1 只校验名字正则，不校验 `__` 前缀）。
-  现按 spec/01 与 node / py 同语义：`__` 前缀模型静默跳过注册（不报错），显式 `Options.Resources`
-  同样过滤；过滤顺序为归档过滤 → 保留名过滤。
-- **显式 `resources` 归档过滤：默认仍过滤 + 新增 `includeArchived` 开关**：node / py / go 统一为
-  默认 `filterReserved(filterArchived(resources ?? store.list()))`（既有默认行为不变）；仅当
-  `includeArchived: true`（py `include_archived=True` / go `Options.IncludeArchived=true`）时跳过归档过滤，
-  点名要看归档表的调用方可拿到。`__` 保留名过滤不受该开关影响。
+  仍走既有 403/401，请求体超限仍 413 —— 这两层是**传输层拒绝**，与执行期错误分层处理。
+- **守卫 `extensions.code` 保留旧值**：见 `Added` 中的 `normalizedCode`；message 仍保留 `ERR_` 前缀。
 
 ## 0.6.0 (2026-11-02)
 

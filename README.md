@@ -11,7 +11,7 @@
 
 - schema 是唯一事实源——没有第二套类型系统，没有手写 SDL。
 - 每个字段都走 store 既有语义：RBAC、计算列、关系、方言路由。
-- 当前发布：`0.6.2`（Node ≥ 18、Python ≥ 3.10，`go/` 下另有 v0 Go 适配器）。
+- 当前发布：`1.0.0`（Node ≥ 18、Python ≥ 3.10，`go/` 下另有 v0 Go 适配器）。
 
 ## 一个屏幕，九个请求
 
@@ -57,6 +57,28 @@ type Mutation {
 
 归档表（`User` 存在时的 `UserDeleted`）与以 `__` 开头的控制面模型会被过滤掉。`x-graphql: {hidden: true}` 整个移除模型；`{readonly: true}` 只生成查询侧。描述从 schema 原样进入 SDL 的三引号注释，于是 GraphiQL 与 `@graphql-codegen` 读到的是 schema 作者写的那份文档。
 
+归档过滤默认对**自动枚举与显式 `resources` 一视同仁**；确实要看归档表时打开 `includeArchived`（三语言写法）：
+
+```javascript
+// node
+const schema = storeGraphql(store, { schemas, includeArchived: true });
+```
+
+```python
+# py
+schema = build_graphql_schema(store, schemas, include_archived=True)
+```
+
+```go
+// go
+schema, err := storegraphql.Build(store, storegraphql.Options{
+    Schemas:         schemas,
+    IncludeArchived: true,
+})
+```
+
+`includeArchived` 只跳过归档过滤；`__` 前缀过滤不受它影响（控制面模型永不进公开类型空间）。
+
 ## 关键机制
 
 ### schema 就是类型系统
@@ -89,23 +111,32 @@ Node 与 Python 都会展开 fragment、在序列化时求值 `@skip` / `@includ
 
 这层皮肤不装 DataLoader，也没有逐父级的子 resolver。选中的嵌套子树就是那次下推投影的一部分，core 把声明的关系编译进同一条语句——SQL 后端是 `LEFT JOIN`，MongoDB 是聚合管道里的 `$lookup`。像 `lessonCount: { agg: { $count: "lessons" } }` 这样的计算聚合会作为类型上的普通字段出现，请求它不增加任何往返。
 
-`0.6.2` 有一条限制：生成器反射 `fields` 与 `computes`。只写在 `defn.relations` 下的关系，core 能解析，但不会自动变成 GraphQL 字段。单查询链路已经通了，关系面的自动类型化还没有。在此之前，用计算聚合，或写一个调用 `store.query` 的 `Query` 扩展。
+`1.0.0` 有一条限制：生成器反射 `fields` 与 `computes`。只写在 `defn.relations` 下的关系，core 能解析，但不会自动变成 GraphQL 字段。单查询链路已经通了，关系面的自动类型化还没有。在此之前，用计算聚合，或写一个调用 `store.query` 的 `Query` 扩展。
 
 ### RBAC 与错误的形状
 
-适配器从不重新实现权限。`contextFactory`（Node）或 `context_provider`（Python）把 HTTP 请求变成 store 上下文；返回 `nil` / `None` 依然显式注入，所以身份不会跨请求泄漏。错误保留原始 message，并补一个机器可读的 code：
+适配器从不重新实现权限。`contextFactory`（Node）或 `context_provider`（Python）把 HTTP 请求变成 store 上下文；返回 `nil` / `None` 依然显式注入，所以身份不会跨请求泄漏。错误保留原始 message，并补一个机器可读的 code。
 
-| 情形 | Node 上的 HTTP | `errors[0]` | `data` |
-|---|---|---|---|
-| core 错误带 `ERR_NOT_FOUND:` 前缀 | 200 | message 不变，`extensions.code = "NOT_FOUND"` | 字段为 `null` |
-| 权限错误 `ERR_PERMISSION:` | 200 | message 不变，`extensions.code = "FORBIDDEN"` | 缺席 |
-| 上下文缺失 `no_context` / `ERR_NO_CONTEXT:` | 200 | message 不变，`extensions.code = "FORBIDDEN"` | 缺席 |
-| 其余 context hook 失败（预执行层） | 401 | message 不变 | 缺席 |
-| 深度、字段数或 introspection 守卫 | 400 | message 带 `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:`；`extensions.code` 保留旧值 `"ERR_DEPTH"` / `"ERR_COMPLEXITY"` / `"ERR_INTROSPECTION"`，另置 `extensions.normalizedCode = "DEPTH"` / `"COMPLEXITY"` / `"INTROSPECTION"` | 缺席 |
+### 状态码分层：执行期 200，预执行层 403/401/413
+
+**执行期**（resolver 内抛出的 store 错误）一律 **200** + `errors[].extensions.code`：GraphQL over HTTP 里
+执行期错误属于 `data: null` + `errors`，HTTP 层成功与否不代表业务成功，按状态码判断权限会误判。
+**预执行层**（`context_provider` / `policy_provider` 失败、请求体超过 1MB）仍在 HTTP 层拒绝：`403` / `401` / `413`。
+两层的区分点是「有没有进入 resolver」，不是错误类型。
+
+| 情形 | 层 | HTTP | `errors[0]` | `data` |
+|---|---|---|---|---|
+| core 错误带 `ERR_NOT_FOUND:` 前缀 | 执行期 | 200 | message 不变，`extensions.code = "NOT_FOUND"` | 字段为 `null` |
+| 权限错误 `ERR_PERMISSION:` | 执行期 | 200 | message 不变，`extensions.code = "FORBIDDEN"` | 缺席 |
+| 上下文缺失 `no_context` / `ERR_NO_CONTEXT:` | 执行期 | 200 | message 不变，`extensions.code = "FORBIDDEN"` | 缺席 |
+| 其余 context hook 失败 | 预执行层 | 401 | message 不变 | 缺席 |
+| `context_provider` / `policy_provider` 判权限失败 | 预执行层 | 403 | message 不变 | 缺席 |
+| 请求体超过 1MB | 预执行层 | 413 | message 不变 | 缺席 |
+| 深度、字段数或 introspection 守卫 | 请求守卫 | 400 | message 带 `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:`；`extensions.code` 保留旧值 `"ERR_DEPTH"` / `"ERR_COMPLEXITY"` / `"ERR_INTROSPECTION"`，另置 `extensions.normalizedCode = "DEPTH"` / `"COMPLEXITY"` / `"INTROSPECTION"` | 缺席 |
 
 这是 `spec/04` 的 Node 参考映射。Python / Go 与 Node 同义：执行期权限类错误统一 200 + `FORBIDDEN`
 （GraphQL over HTTP 执行期错误本就是 200，靠 `extensions.code` 区分），其余执行错误放进 200 响应体；
-`context_provider` / `policy_provider` 预执行层失败仍套用 403/401 分流；请求守卫同样返回 400，
+`context_provider` / `policy_provider` 预执行层失败、请求体超限仍套用 403/401/413；请求守卫同样返回 400，
 `extensions.code` 保留 `ERR_` 旧值并另置 `normalizedCode`。`getX` 未命中不是错误：它返回 `null`。
 
 ## 跑起来
@@ -194,7 +225,7 @@ curl -s http://localhost:4000/graphql \
 
 - **需要订阅。** 没有。store 没有订阅语义，这层皮肤也不发明。
 - **需要 offset 分页或 count 根。** `listX` 只暴露 `limit`；`skip` / `page` 和 `countX` 不生成。
-- **指望关系自动出现。** `0.6.2` 只类型化 `fields` 与 `computes`，`defn.relations` 不自动暴露。
+- **指望关系自动出现。** `1.0.0` 只类型化 `fields` 与 `computes`，`defn.relations` 不自动暴露。
 - **想内联 JSON 参数。** `condition`、`sort`、`input`、`set` 只接受变量，内联字面量被刻意拒绝。
 - **依赖输出别名。** v0 按字段名序列化，丢弃别名。
 - **匿名暴露。** core 把缺失上下文当作「跳过权限检查」。上公网前配好上下文钩子，并打开 `setRequireContext(true)`。

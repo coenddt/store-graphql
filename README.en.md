@@ -11,7 +11,7 @@
 
 - The schema is the only source of truth — no second type system, no hand-written SDL.
 - Every field rides the store's existing semantics: RBAC, computed columns, relations, dialect routing.
-- Current release: `0.6.2` (Node ≥ 18, Python ≥ 3.10, plus a v0 Go adapter in `go/`).
+- Current release: `1.0.0` (Node ≥ 18, Python ≥ 3.10, plus a v0 Go adapter in `go/`).
 
 ## Nine requests for one screen
 
@@ -55,6 +55,28 @@ type Mutation {
 
 Archive tables (`UserDeleted` while `User` exists) and control-plane models whose names start with `__` are filtered out. `x-graphql: {hidden: true}` removes a model entirely; `{readonly: true}` emits only the query side. Descriptions travel from the schema into SDL triple-quoted comments unchanged, so GraphiQL and `@graphql-codegen` read the same documentation the schema author wrote.
 
+Archive filtering now applies equally to auto-enumeration and to an explicit `resources` list. When you really need an archive table, turn on `includeArchived`:
+
+```javascript
+// node
+const schema = storeGraphql(store, { schemas, includeArchived: true });
+```
+
+```python
+# py
+schema = build_graphql_schema(store, schemas, include_archived=True)
+```
+
+```go
+// go
+schema, err := storegraphql.Build(store, storegraphql.Options{
+    Schemas:         schemas,
+    IncludeArchived: true,
+})
+```
+
+`includeArchived` only skips the archive filter; the `__` filter is unaffected (control-plane models never enter the public type space).
+
 ## Key mechanisms
 
 ### The schema is the type system
@@ -87,24 +109,34 @@ On Node and Python, fragments are expanded, `@skip` / `@include` are evaluated d
 
 The skin installs no DataLoader and no per-parent child resolver. Whatever nested subtree is selected is part of the one pushed-down projection, and the core compiles declared relations into the same statement — a `LEFT JOIN` on SQL backends, a `$lookup` inside the aggregation pipeline on MongoDB. A computed aggregate such as `lessonCount: { agg: { $count: "lessons" } }` arrives as an ordinary field on the type, so asking for it adds zero round trips.
 
-One caveat for `0.6.2`: the generator reflects `fields` and `computes`. A relation declared only under `defn.relations` is resolved by the core but is not auto-added as a GraphQL field. The single-query path is in place; auto-typing the relation surface is not. Until then, use a computed aggregate or a `Query` extension that calls `store.query` with the relation projection.
+One caveat for `1.0.0`: the generator reflects `fields` and `computes`. A relation declared only under `defn.relations` is resolved by the core but is not auto-added as a GraphQL field. The single-query path is in place; auto-typing the relation surface is not. Until then, use a computed aggregate or a `Query` extension that calls `store.query` with the relation projection.
 
 ### RBAC and the shape of an error
 
-The adapter never re-implements permissions. A `contextFactory` (Node) or `context_provider` (Python) turns the HTTP request into a store context; returning `nil` / `None` still injects it, so identity cannot leak across requests. Errors keep their original message and gain a machine-readable code:
+The adapter never re-implements permissions. A `contextFactory` (Node) or `context_provider` (Python) turns the HTTP request into a store context; returning `nil` / `None` still injects it, so identity cannot leak across requests. Errors keep their original message and gain a machine-readable code.
 
-| Situation | HTTP on Node | `errors[0]` | `data` |
-|---|---|---|---|
-| Core error prefixed `ERR_NOT_FOUND:` | 200 | message unchanged, `extensions.code = "NOT_FOUND"` | field is `null` |
-| Permission error `ERR_PERMISSION:` | 200 | message unchanged, `extensions.code = "FORBIDDEN"` | absent |
-| Missing context, `no_context` / `ERR_NO_CONTEXT:` | 200 | message unchanged, `extensions.code = "FORBIDDEN"` | absent |
-| Any other context-hook failure (pre-execution) | 401 | message unchanged | absent |
-| Depth, field-count or introspection guard | 400 | message keeps `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:`; `extensions.code` keeps the legacy `"ERR_DEPTH"` / `"ERR_COMPLEXITY"` / `"ERR_INTROSPECTION"`, plus `extensions.normalizedCode = "DEPTH"` / `"COMPLEXITY"` / `"INTROSPECTION"` | absent |
+### Status codes: execution-time 200, pre-execution 403/401/413
+
+**Execution-time** errors (store failures thrown inside a resolver) are always **200** with `errors[].extensions.code`:
+in GraphQL over HTTP they are `data: null` + `errors`, so an HTTP status does not mean business success — branching
+on it for permission would misread the response. **Pre-execution** failures (`context_provider` / `policy_provider`
+errors, oversized request bodies) are still rejected at the HTTP layer: `403` / `401` / `413`. The dividing line is
+"did we reach a resolver", not the error type.
+
+| Situation | Layer | HTTP | `errors[0]` | `data` |
+|---|---|---|---|---|
+| Core error prefixed `ERR_NOT_FOUND:` | execution | 200 | message unchanged, `extensions.code = "NOT_FOUND"` | field is `null` |
+| Permission error `ERR_PERMISSION:` | execution | 200 | message unchanged, `extensions.code = "FORBIDDEN"` | absent |
+| Missing context, `no_context` / `ERR_NO_CONTEXT:` | execution | 200 | message unchanged, `extensions.code = "FORBIDDEN"` | absent |
+| Any other context-hook failure | pre-execution | 401 | message unchanged | absent |
+| `context_provider` / `policy_provider` permission denial | pre-execution | 403 | message unchanged | absent |
+| Request body over 1 MB | pre-execution | 413 | message unchanged | absent |
+| Depth, field-count or introspection guard | request guard | 400 | message keeps `ERR_DEPTH:` / `ERR_COMPLEXITY:` / `ERR_INTROSPECTION:`; `extensions.code` keeps the legacy `"ERR_DEPTH"` / `"ERR_COMPLEXITY"` / `"ERR_INTROSPECTION"`, plus `extensions.normalizedCode = "DEPTH"` / `"COMPLEXITY"` / `"INTROSPECTION"` | absent |
 
 This is the Node reference mapping from `spec/04`. Python and Go agree with Node on
 execution-time permission errors (200 + `FORBIDDEN`; execution errors are 200 in GraphQL over HTTP,
 discriminated by `extensions.code`); other execution errors stay in a 200 payload.
-`context_provider` / `policy_provider` pre-execution failures keep the 403/401 split, and guard
+`context_provider` / `policy_provider` pre-execution failures and oversized bodies keep the 403/401/413 split, and guard
 responses emit the legacy `extensions.code` plus `normalizedCode`. A `getX` miss is not an error: it returns `null`.
 
 ## Run it
@@ -193,7 +225,7 @@ curl -s http://localhost:4000/graphql \
 
 - **You need subscriptions.** There are none. The store has no subscription semantics, and this skin does not invent them.
 - **You need offset paging or a count root.** `listX` exposes only `limit`; `skip` / `page` and `countX` are not generated.
-- **You expect relations to appear automatically.** In `0.6.2` only `fields` and `computes` are typed; `defn.relations` is not auto-exposed.
+- **You expect relations to appear automatically.** In `1.0.0` only `fields` and `computes` are typed; `defn.relations` is not auto-exposed.
 - **You want to inline JSON arguments.** `condition`, `sort`, `input` and `set` accept variables only; inline literals are rejected by deliberate design.
 - **You rely on output aliases.** v0 serializes by field name and drops aliases.
 - **You are exposing it anonymously.** The core treats a missing context as "skip permission checks". Configure the context hook and enable `setRequireContext(true)` before putting this on a public network.
