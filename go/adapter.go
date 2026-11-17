@@ -21,11 +21,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/coenddt/go-store"
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/graphql/gqlerrors"
 	"github.com/graphql-go/graphql/language/ast"
 	"github.com/graphql-go/graphql/language/parser"
+
+	"github.com/coenddt/go-store"
 )
 
 // maxBodyBytes 请求体上限（对齐 store-api/go/adapter.go 的 1MB 先例，防大 body 撑内存）。
@@ -97,7 +98,7 @@ func queryDepth(doc *ast.Document) int {
 		if selSet == nil {
 			return 0
 		}
-		max := 0
+		maxDepth := 0
 		for _, sel := range selSet.Selections {
 			d := 0
 			switch s := sel.(type) {
@@ -118,21 +119,21 @@ func queryDepth(doc *ast.Document) int {
 					}
 				}
 			}
-			if d > max {
-				max = d
+			if d > maxDepth {
+				maxDepth = d
 			}
 		}
-		return max
+		return maxDepth
 	}
-	max := 0
+	maxDepth := 0
 	for _, def := range doc.Definitions {
 		if op, ok := def.(*ast.OperationDefinition); ok {
-			if d := depthOfSelSet(op.SelectionSet, map[string]bool{}); d > max {
-				max = d
+			if d := depthOfSelSet(op.SelectionSet, map[string]bool{}); d > maxDepth {
+				maxDepth = d
 			}
 		}
 	}
-	return max
+	return maxDepth
 }
 
 const archiveSuffix = "Deleted"
@@ -263,7 +264,7 @@ func fieldsMap(fields map[string]any, typeName string) graphql.Fields {
 		if defn == nil {
 			continue
 		}
-		t := graphql.Type(jsonScalar)
+		var t graphql.Type
 		if k == "_id" {
 			t = graphql.NewNonNull(graphql.ID)
 		} else {
@@ -691,7 +692,7 @@ func Build(st Store, opts Options) (graphql.Schema, error) {
 				mutationFields[f] = v
 			}
 		default:
-			return schema, fmt.Errorf("Extensions 仅支持 Query/Mutation，收到 %q（spec/03）", key)
+			return schema, fmt.Errorf("extensions 仅支持 Query/Mutation，收到 %q（spec/03）", key)
 		}
 	}
 

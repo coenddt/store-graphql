@@ -117,7 +117,7 @@ func defnMap(t *testing.T) map[string]any {
 	return v
 }
 
-func newMockStore(t *testing.T) *mockStore {
+func newMockStore(_ *testing.T) *mockStore {
 	return &mockStore{nextID: 1}
 }
 
@@ -543,7 +543,7 @@ func TestAnnotationsAndOverride(t *testing.T) {
 	_, err := Build(st2, Options{
 		Schemas: []map[string]any{defnMap(t)},
 		Overrides: map[string]graphql.FieldResolveFn{
-			"Query.listUser": func(p graphql.ResolveParams) (interface{}, error) {
+			"Query.listUser": func(_ graphql.ResolveParams) (interface{}, error) {
 				return []map[string]any{{"_id": "x", "name": "override"}}, nil
 			},
 		},
@@ -554,7 +554,7 @@ func TestAnnotationsAndOverride(t *testing.T) {
 	ov := do(t, buildTestSchema(t, st2, Options{
 		Schemas: []map[string]any{defnMap(t)},
 		Overrides: map[string]graphql.FieldResolveFn{
-			"Query.listUser": func(p graphql.ResolveParams) (interface{}, error) {
+			"Query.listUser": func(_ graphql.ResolveParams) (interface{}, error) {
 				return []map[string]any{{"_id": "x", "name": "override"}}, nil
 			},
 		},
@@ -565,7 +565,7 @@ func TestAnnotationsAndOverride(t *testing.T) {
 
 	if _, err := Build(newMockStore(t), Options{
 		Schemas:   []map[string]any{defnMap(t)},
-		Overrides: map[string]graphql.FieldResolveFn{"Query.listNope": func(p graphql.ResolveParams) (interface{}, error) { return nil, nil }},
+		Overrides: map[string]graphql.FieldResolveFn{"Query.listNope": func(_ graphql.ResolveParams) (interface{}, error) { return nil, nil }},
 	}); err == nil || !strings.Contains(err.Error(), "未命中") {
 		t.Fatalf("未知 override 路径应报错，实际: %v", err)
 	}
