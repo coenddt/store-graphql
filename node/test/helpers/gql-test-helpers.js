@@ -4,6 +4,9 @@
  * smoke / conformance / e2e.real 共用的 GraphQL 测试辅助：
  * 内存版 store（query 按「模型+条件」匹配并记录 GQL 串供断言投影下推）
  * 与 execute 执行器（错误聚合为单条 Error 上抛）。
+ *
+ * D4-4：makeMockStore / makeApp / gqlPost 自 smoke.test.js 下沉（桩体逐字，
+ * src 相对路径随层级加深一级）。
  */
 
 const { parse, execute } = require('graphql');
@@ -69,4 +72,29 @@ const DEFN = {
   },
 };
 
-module.exports = { makeGqlMockStore, runQuery, DEFN };
+// 内存版 store：query 按「模型+条件」匹配，记录 GQL 串供断言投影下推（共用辅助工厂）
+function makeMockStore() {
+  return makeGqlMockStore({
+    names: ['User'],
+    schemaDefn: DEFN,
+    idOf: (rows) => `u${rows.length + 1}`,
+  });
+}
+
+// ── spec/04：HTTP 承载（graphqlPlugin，Fastify 插件）──
+
+async function makeApp(opts) {
+  const app = require('fastify')({ logger: false });
+  await app.register(require('../../src/index').graphqlPlugin, opts);
+  await app.ready();
+  return app;
+}
+
+const gqlPost = (url, query) => ({
+  method: 'POST',
+  url,
+  headers: { 'content-type': 'application/json' },
+  payload: { query },
+});
+
+module.exports = { makeGqlMockStore, runQuery, DEFN, makeMockStore, makeApp, gqlPost };
