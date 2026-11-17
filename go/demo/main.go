@@ -11,7 +11,7 @@ import (
 
 	gostore "github.com/coenddt/go-store"
 
-	"github.com/coenddt/store-graphql-go"
+	storegraphql "github.com/coenddt/store-graphql-go"
 )
 
 var userDefn = map[string]any{

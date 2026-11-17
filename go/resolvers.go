@@ -12,7 +12,7 @@ import (
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/graphql/language/ast"
 
-	"github.com/coenddt/go-store"
+	gostore "github.com/coenddt/go-store"
 )
 
 // ── spec/02：selection → GQL 投影串（fragments 展开 + @skip/@include 求值 + 空投影回退）──
@@ -69,6 +69,16 @@ func truthy(v any) bool {
 // 含 FragmentSpread 时经 info.Fragments 展开展开失败则回退 allFields（spec/02 go 端差异）。
 func projectionFrom(p graphql.ResolveParams, allFields []string) string {
 	var walk func(sel ast.Selection) string
+	// joinSet 遍历子选择集并 join（Field/InlineFragment/FragmentSpread 三分支共用形态）。
+	joinSet := func(set *ast.SelectionSet) string {
+		parts := []string{}
+		for _, sub := range set.Selections {
+			if w := walk(sub); w != "" {
+				parts = append(parts, w)
+			}
+		}
+		return strings.Join(parts, ", ")
+	}
 	walk = func(sel ast.Selection) string {
 		switch s := sel.(type) {
 		case *ast.Field:
@@ -92,23 +102,11 @@ func projectionFrom(p graphql.ResolveParams, allFields []string) string {
 			if s.SelectionSet == nil {
 				return ""
 			}
-			parts := []string{}
-			for _, sub := range s.SelectionSet.Selections {
-				if w := walk(sub); w != "" {
-					parts = append(parts, w)
-				}
-			}
-			return strings.Join(parts, ", ")
+			return joinSet(s.SelectionSet)
 		case *ast.FragmentSpread:
 			if p.Info.Fragments != nil {
 				if def, ok := p.Info.Fragments[s.Name.Value]; ok && def.GetSelectionSet() != nil {
-					parts := []string{}
-					for _, sub := range def.GetSelectionSet().Selections {
-						if w := walk(sub); w != "" {
-							parts = append(parts, w)
-						}
-					}
-					return strings.Join(parts, ", ")
+					return joinSet(def.GetSelectionSet())
 				}
 			}
 			return ""

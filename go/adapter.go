@@ -27,7 +27,7 @@ import (
 	"github.com/graphql-go/graphql/gqlerrors"
 	"github.com/graphql-go/graphql/language/parser"
 
-	"github.com/coenddt/go-store"
+	gostore "github.com/coenddt/go-store"
 )
 
 // maxBodyBytes 请求体上限（对齐 store-api/go/adapter.go 的 1MB 先例，防大 body 撑内存）。
@@ -139,16 +139,64 @@ const graphiqlHTML = `<!doctype html>
 `
 
 // Handler GraphQL over HTTP（spec/04）：POST application/json；GET 默认返回 GraphiQL
-// 文档页（spec/05），DisableGraphiQL=true 时 GET 与其它方法一致返回 405。
+// serveGraphiQL GET 文档页（spec/05）；DisableGraphiQL=true 时按 spec/04 仅 POST
+// 语义与其它方法一致返回 405。
+func serveGraphiQL(w http.ResponseWriter, opts Options) {
+	if opts.DisableGraphiQL {
+		http.Error(w, `{"errors":[{"message":"仅支持 POST（spec/04）"}]}`, http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(graphiqlHTML))
+}
+
+// guardPreExec spec/04 深度/复杂度/introspection 守卫：执行前独立 parse 检查
+// （语法错不在此拦，交给 graphql.Do 原路径）。返回 true 表示已拦截并写好响应。
+func guardPreExec(w http.ResponseWriter, query string, opts Options) bool {
+	if query == "" {
+		return false
+	}
+	depthLimit := opts.MaxQueryDepth
+	if depthLimit <= 0 {
+		depthLimit = maxQueryDepth
+	}
+	fieldsLimit := opts.MaxQueryFields
+	if fieldsLimit <= 0 {
+		fieldsLimit = maxQueryFields
+	}
+	doc, err := parser.Parse(parser.ParseParams{Source: query})
+	if err != nil {
+		return false
+	}
+	if d := queryDepth(doc); d > depthLimit {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_DEPTH:查询深度 %d 超过上限 %d","extensions":{"code":"ERR_DEPTH","normalizedCode":"DEPTH"}}]}`, d, depthLimit)
+		return true
+	}
+	fields, introUsed := queryFieldCount(doc)
+	if introUsed && opts.DisableIntrospection {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"errors":[{"message":"ERR_INTROSPECTION:introspection 已禁用","extensions":{"code":"ERR_INTROSPECTION","normalizedCode":"INTROSPECTION"}}]}`))
+		return true
+	}
+	if fields > fieldsLimit {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_COMPLEXITY:查询字段数 %d 超过上限 %d","extensions":{"code":"ERR_COMPLEXITY","normalizedCode":"COMPLEXITY"}}]}`, fields, fieldsLimit)
+		return true
+	}
+	return false
+}
+
+// Handler 返回 HTTP handler：GET 走文档页（spec/05，DisableGraphiQL=true 时按
+// spec/04 仅 POST 语义返回 405）；POST 执行 GraphQL（spec/04 守卫 + 执行期错误补
+// extensions.code，HTTP 200 契约）。
 func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			if opts.DisableGraphiQL {
-				http.Error(w, `{"errors":[{"message":"仅支持 POST（spec/04）"}]}`, http.StatusMethodNotAllowed)
-				return
-			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(graphiqlHTML))
+			serveGraphiQL(w, opts)
 			return
 		}
 		if r.Method != http.MethodPost {
@@ -183,38 +231,8 @@ func Handler(schema graphql.Schema, opts Options) http.HandlerFunc {
 			}
 			ctx = withActx(ctx, actx)
 		}
-		// spec/04 深度/复杂度/introspection 守卫：执行前独立 parse 检查
-		// （语法错不在此拦，交给 graphql.Do 原路径）
-		if body.Query != "" {
-			depthLimit := opts.MaxQueryDepth
-			if depthLimit <= 0 {
-				depthLimit = maxQueryDepth
-			}
-			fieldsLimit := opts.MaxQueryFields
-			if fieldsLimit <= 0 {
-				fieldsLimit = maxQueryFields
-			}
-			if doc, err := parser.Parse(parser.ParseParams{Source: body.Query}); err == nil {
-				if d := queryDepth(doc); d > depthLimit {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusBadRequest)
-					_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_DEPTH:查询深度 %d 超过上限 %d","extensions":{"code":"ERR_DEPTH","normalizedCode":"DEPTH"}}]}`, d, depthLimit)
-					return
-				}
-				fields, introUsed := queryFieldCount(doc)
-				if introUsed && opts.DisableIntrospection {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusBadRequest)
-					_, _ = w.Write([]byte(`{"errors":[{"message":"ERR_INTROSPECTION:introspection 已禁用","extensions":{"code":"ERR_INTROSPECTION","normalizedCode":"INTROSPECTION"}}]}`))
-					return
-				}
-				if fields > fieldsLimit {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusBadRequest)
-					_, _ = fmt.Fprintf(w, `{"errors":[{"message":"ERR_COMPLEXITY:查询字段数 %d 超过上限 %d","extensions":{"code":"ERR_COMPLEXITY","normalizedCode":"COMPLEXITY"}}]}`, fields, fieldsLimit)
-					return
-				}
-			}
+		if guardPreExec(w, body.Query, opts) {
+			return
 		}
 		result := graphql.Do(graphql.Params{
 			Schema:         schema,
