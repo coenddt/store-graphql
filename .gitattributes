@@ -1,0 +1,2 @@
+# Go 源码统一 LF：gofmt/goimports 输出 LF；eol=lf 优先于 core.autocrlf，checkout 不再转回 CRLF。
+*.go text eol=lf
