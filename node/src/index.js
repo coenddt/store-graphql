@@ -39,11 +39,13 @@ const MAX_QUERY_DEPTH = 10;
 const MAX_QUERY_FIELDS = 300;
 
 // introspection 根字段（__schema / __type）：出现即判定为「用了 introspection」
+/** introspection 根字段判定（__schema / __type） */
 function isIntrospectionName(name) {
   return name === '__schema' || name === '__type';
 }
 
 // 字段计数 + introspection 使用检测(fragment 展开计入,visiting 防环;__typename 放行)
+/** 统计 AST 字段节点总数并检测是否使用 introspection（fragment 展开、防环） */
 function queryFieldCount(document) {
   const fragments = {};
   for (const def of document.definitions) {
@@ -51,6 +53,7 @@ function queryFieldCount(document) {
   }
   let count = 0;
   let introspectionUsed = false;
+  /** 递归遍历 selectionSet 计数（visiting 防 fragment 环；InlineFragment 原地展开） */
   const walkSelSet = (selSet, visiting) => {
     if (!selSet) return;
     for (const sel of selSet.selections) {
@@ -80,11 +83,13 @@ function queryFieldCount(document) {
 
 // 深度 = 从 operation 顶层 selectionSet 起的最大字段嵌套层数;FragmentSpread 按定义
 // 递归(visiting 防环),InlineFragment 原地展开;取所有 operation 的最大值。
+/** 计算所有 operation 的最大字段嵌套深度（fragment 展开、防环） */
 function queryDepthOf(document) {
   const fragments = {};
   for (const def of document.definitions) {
     if (def.kind === Kind.FRAGMENT_DEFINITION) fragments[def.name.value] = def;
   }
+  /** 递归求 selectionSet 的最大深度（FIELD 计 1 层，InlineFragment 不增层） */
   const depthOfSelSet = (selSet, visiting) => {
     if (!selSet) return 0;
     let max = 0;
@@ -116,6 +121,7 @@ function queryDepthOf(document) {
 }
 
 // ── spec/01：归档表过滤（与 store-api 三端逐字一致）──
+/** 归档表过滤：剔除「有同名存续表」的 <名>Deleted（spec/01，三端逐字一致） */
 function filterArchived(names) {
   const set = new Set(names);
   return names.filter(
@@ -128,6 +134,7 @@ function filterArchived(names) {
 // 一旦进 schema，assertValidSchema 判「Name "__x" must not begin with "__"」→ 全 schema 失效。
 // 该过滤为 GraphQL 皮专有约束（REST/gRPC/MCP 无此限制），故不并入与 store-api 逐字一致的
 // filterArchived；按 GraphQL 规范无条件生效（含显式 resources 入参）。
+/** 剔除 `__` 前缀保留名（GraphQL 规范：不得作为类型名） */
 function filterReserved(names) {
   return names.filter((n) => !n.startsWith('__'));
 }
@@ -144,6 +151,7 @@ const GraphQLJSON = new GraphQLScalarType({
 });
 
 // ── spec/01：defn 字段类型 → GraphQL 输出类型 ──
+/** defn 字段类型 → GraphQL 标量；未知类型返回 null（调用侧回落 JSON） */
 function scalarFor(typeName) {
   switch (typeName) {
     case 'string':
@@ -160,6 +168,7 @@ function scalarFor(typeName) {
   }
 }
 
+/** 字段定义 → GraphQL 输出类型：object 建嵌套对象类型，其余走标量 / JSON */
 function outType(fieldDefn, typeName) {
   if (fieldDefn.type === 'object' && fieldDefn.fields) {
     return new GraphQLObjectType({
@@ -188,6 +197,7 @@ function mapFields(fields, typeName) {
   return out;
 }
 
+/** 模型对外字段集：fields + computes + 恒注入的 _score（向量得分） */
 function modelFields(defn) {
   // fields + computes 视同字段进入类型（spec/01）
   // `_score`：向量检索派生列（04），恒注入且可空 —— 未请求时 core 不产出该键
@@ -215,6 +225,7 @@ function directiveIfValue(d, vars) {
   return undefined;
 }
 
+/** @skip / @include 求值：任一条件不满足即排除该字段 */
 function shouldInclude(node, vars) {
   for (const d of node.directives || []) {
     if (!isConditionalDirective(d)) continue;
@@ -226,9 +237,11 @@ function shouldInclude(node, vars) {
   return true;
 }
 
+/** resolveInfo → GQL 投影串（fragments 展开、指令求值、空投影回退 _id） */
 function projectionFromResolveInfo(info) {
   const root = info.fieldNodes.find((n) => n.kind === Kind.FIELD) || info.fieldNodes[0];
   const vars = info.variableValues || {};
+  /** 单节点投影拼装：FIELD 拼「名 { 子投影 }」，fragment 原地展开 */
   const walk = (sel) => {
     if (sel.kind === Kind.FIELD) {
       if (!shouldInclude(sel, vars)) return null;
@@ -266,6 +279,7 @@ async function queryByIdRow(store, name, idField, id, projection) {
   return rows && rows[0] ? rows[0] : null;
 }
 
+/** 生成单行查询 resolver（按 id 回查，投影下推） */
 function makeGet(store, name, idField) {
   return async (_src, args, _ctx, info) => {
     const projection = projectionFromResolveInfo(info);
@@ -311,6 +325,7 @@ function vectorLimitGuard(condition, explicitLimit) {
   return true;
 }
 
+/** 生成列表 resolver（条件 / 排序 / limit 守卫 + 投影下推） */
 function makeList(store, name) {
   return async (_src, args, _ctx, info) => {
     // 04：先判 `$near`，再走 limit 守卫（顺序不可颠倒：互斥文案优先于上界文案）
@@ -335,10 +350,12 @@ function makeList(store, name) {
   };
 }
 
+/** 生成插入 resolver（原样透传 input 给 store.insert） */
 function makeCreate(store, name) {
   return async (_src, args) => store.insert(name, args.input);
 }
 
+/** 生成更新 resolver（update 后按投影回读最新行） */
 function makeUpdate(store, name, idField) {
   return async (_src, args, _ctx, info) => {
     await store.update(name, { [idField]: args.id }, args.set);
@@ -347,6 +364,7 @@ function makeUpdate(store, name, idField) {
   };
 }
 
+/** 生成删除 resolver（store.remove，恒返回 true） */
 function makeDelete(store, name, idField) {
   return async (_src, args) => {
     await store.remove(name, { [idField]: args.id });
@@ -435,6 +453,7 @@ function schemaOf(queryFields, mutationFields) {
   });
 }
 
+/** 由 store 的模型清单构建完整 GraphQLSchema（含归档 / 保留名过滤与 override 校验） */
 function buildGraphQLSchema(store, opts = {}) {
   const idField = opts.idField || '_id';
   const overrides = opts.overrides || {};
@@ -448,6 +467,7 @@ function buildGraphQLSchema(store, opts = {}) {
   const mutationFields = {};
   const usedOverrideKeys = new Set();
 
+  /** 取 override 解析器（命中即登记用于构建期校验）；缺省回落内置 resolver */
   const resolveWithOverride = (key, fallback) => {
     const fn = overrides[key];
     if (fn) usedOverrideKeys.add(key);
@@ -461,6 +481,7 @@ function buildGraphQLSchema(store, opts = {}) {
 }
 
 // ── spec/01：SDL 导出（喂客户端 codegen）──
+/** 导出 SDL 文本（喂客户端 codegen） */
 function exportSDL(schema) {
   return printSchema(schema);
 }
@@ -468,6 +489,7 @@ function exportSDL(schema) {
 // ── spec/04：HTTP 承载（GraphQL Yoga，可选依赖）──
 
 // isPermissionError 按 core 稳定前缀判定（ERR_PERM_PREFIX 契约，同 store-api 三端，禁按文案匹配）
+/** 权限错误判定：按 ERR_PERMISSION: 稳定前缀，禁按文案匹配 */
 function isPermissionError(e) {
   return String((e && e.message) || e).startsWith('ERR_PERMISSION:');
 }
@@ -475,6 +497,7 @@ function isPermissionError(e) {
 // isNoContextError 判定权限类同档的 NoContext（requireContext 开启且 ctx 缺失）：
 // 宿主（nodejs-store）抛 NoContextError 带 machine code `no_context`（已剥前缀）；字符串
 // 通道 host 保留 `ERR_NO_CONTEXT:` 前缀。按类型/码判定，禁按文案匹配 → 与权限类同 ⇒ 403。
+/** 上下文缺失判定（与权限类同档）：按类型 / machine code / 稳定前缀三分支 */
 function isNoContextError(e) {
   if (!e) return false;
   if (e.code === 'no_context' || e.name === 'NoContextError') return true;
@@ -482,6 +505,7 @@ function isNoContextError(e) {
 }
 
 // 权限类（含同档 NoContext）统一判定
+/** 权限类判定（权限错误 + 同档 NoContext） */
 function isPermissionClass(e) {
   return isPermissionError(e) || isNoContextError(e);
 }
@@ -490,6 +514,7 @@ function isPermissionClass(e) {
 // message 原样保留（含前缀）；权限类走下方 FORBIDDEN 分支，不在此改写（code 只增不改）。
 const ERR_PREFIX_RE = /^(ERR_[A-Z0-9_]+):/;
 
+/** ERR_<CODE>: 前缀 → <CODE>；非该形态或权限前缀返回 null */
 function stableErrorCode(message) {
   if (typeof message !== 'string') return null;
   const m = ERR_PREFIX_RE.exec(message);
@@ -537,6 +562,7 @@ function forbiddenMasked(error, orig) {
   });
 }
 
+/** 默认错误掩码：权限类 → FORBIDDEN，其余补 extensions.code 并保留原文 */
 function defaultMaskError(error) {
   const orig = (error && error.originalError) || error;
   if (isPermissionClass(error) || isPermissionClass(orig)) {
@@ -564,6 +590,7 @@ function assertSecureConfig(store, opts) {
 // R2-04：policyProvider 可选注入（进程级全局单值状态，默认关闭 = 现状零变化）。
 // 视图派生只许 store.baseView().withPolicy(overrides)（皮侧禁自持 Registry——R2-04 §7），
 // 作用域原语 withScope 为 nodejs-store optional peer，仅注入 policyProvider 时才加载。
+/** 取 store 的作用域包装（policyProvider 存在时每请求包 withScope；缺 baseView 即报错） */
 function resolveWithScope(store) {
   if (typeof store.baseView !== 'function') {
     throw new Error(
@@ -670,6 +697,7 @@ function resolveMaskedErrors(opts) {
   return { maskError: opts.maskError || defaultMaskError };
 }
 
+/** 装配 Yoga 实例：schema 构建 + 深度/字段守卫插件 + 掩码 + 可选端点 */
 function createYoga(store, opts = {}) {
   assertSecureConfig(store, opts);
   const policyProvider = opts.policyProvider || null;
@@ -701,6 +729,7 @@ const SKIP_RES_HEADERS = new Set(['content-length', 'content-encoding', 'transfe
 
 // spec/04：错误分类响应——权限类 403、其余 401，body 只含 message（不泄栈）。
 // contextFactory / policyProvider 两处 catch 共用（同一分类与同一 JSON 形状）。
+/** 错误分类响应：权限类 403、其余 401，body 只含 message（不泄栈） */
 function classifiedErrorResponse(e) {
   const status = isPermissionClass(e) ? 403 : 401;
   return new Response(
@@ -709,6 +738,7 @@ function classifiedErrorResponse(e) {
   );
 }
 
+/** Fastify 插件入口：挂 GET/POST 路由，转 Request 调 yoga 并回写状态码/响应头 */
 async function graphqlPlugin(fastify, opts = {}) {
   const { store, path: gqlPath = '/graphql', ...yogaOpts } = opts;
   if (!store) throw new Error('ERR_NO_STORE:graphqlPlugin 需要 store（spec/00 store 端口契约）');
