@@ -460,7 +460,7 @@ test('policyProvider 装配守卫 + requireContext 覆盖：无 ctx 请求 → n
   try {
     currentView = require('nodejs-store').currentView;
   } catch {
-    return t.skip('nodejs-store(optional peer) 不可解析：CI 无宿主包，policyProvider 流程本地验证');
+    return t.skip('[环境依赖] nodejs-store(optional peer) 不可解析：CI 无宿主包，policyProvider 流程本地验证');
   }
 
   // 装配守卫：宿主未导出 baseView() 时注入 policyProvider ⇒ 装配期显式失败（fail-fast，禁静默降级）
@@ -517,7 +517,7 @@ test('policyProvider：profile 覆盖经视图生效（查询面可观察）；c
   try {
     currentView = require('nodejs-store').currentView;
   } catch {
-    return t.skip('nodejs-store(optional peer) 不可解析：CI 无宿主包，policyProvider 流程本地验证');
+    return t.skip('[环境依赖] nodejs-store(optional peer) 不可解析：CI 无宿主包，policyProvider 流程本地验证');
   }
   const store = makeMockStore();
   store.baseView = () => ({ withPolicy: (o) => ({ overrides: o }) });

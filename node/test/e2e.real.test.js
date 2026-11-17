@@ -13,7 +13,7 @@ const { parse, execute } = require('graphql');
 
 let nodejsStore;
 let Database;
-let skipReason = '';
+let skipReason = ''; // 空串=可跑；非空=[环境依赖] 前缀理由
 try {
   try {
     nodejsStore = require('nodejs-store');
@@ -26,7 +26,7 @@ try {
     Database = require('../../../nodejs-store/node_modules/better-sqlite3');
   }
 } catch (e) {
-  skipReason = `真实库依赖缺失: ${e.message}`;
+  skipReason = `[环境依赖] 真实库依赖缺失: ${e.message}`;
 }
 
 const DEFN = {
