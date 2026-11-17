@@ -50,16 +50,27 @@ jobs:
   go:
     name: go tests
     # go-store 的 FFI 加载是 Windows 专属(load_windows.go),Linux 编译不过;
-    # Windows runner 上 dll 缺失时运行时显式 skip(设计如此)
+    # 真实构建 rust dll 后 e2e(真实库) 全链路真跑,不再依赖「dll 缺失 ⇒ skip」的空转门禁
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version-file: go/go.mod
       # go.mod 的 replace 指向 ../../go-store(相对 go/),CI 单仓库无此目录 ⇒ 克隆到相对位置
       - name: Clone go-store (for replace)
         run: git clone --depth 1 https://github.com/coenddt/go-store.git ../go-store
+      - name: Clone rust-store (core-ffi cdylib)
+        run: git clone --depth 1 https://github.com/coenddt/rust-store.git ../rust-store
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build core-ffi cdylib
+        working-directory: ../rust-store
+        run: cargo build -p rust-store-ffi --locked
       - name: Test
         working-directory: go
-        run: go test ./...
+        env:
+          RUST_STORE_FFI: ${{ github.workspace }}\..\rust-store\target\debug\rust_store_ffi.dll
+        run: go test ./... -count=1

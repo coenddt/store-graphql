@@ -1,0 +1,13 @@
+# store-graphql(go 端)静态检查基线：与 go-store 同一套 linter 组合,保证三仓库口径一致。
+# 本地复现:golangci-lint run --max-same-issues=0
+version: "2"
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - revive
+    - gocritic
+    - misspell

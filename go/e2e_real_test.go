@@ -44,7 +44,9 @@ func numEq(v interface{}, want float64) bool {
 func TestE2ERealSQLite(t *testing.T) {
 	st, err := gostore.Open("sqlite::memory:")
 	if err != nil {
-		t.Skipf("rust core FFI 不可用(rust-store/target/release/rust_store_ffi.dll 缺失?): %v", err)
+		// 构建指引：在仓库兄弟目录 rust-store 执行 `cargo build -p rust-store-ffi --locked`
+		// 产出 target/release/rust_store_ffi.dll（debug 构建同样可被探测，见 go-store/ffi.go）。
+		t.Skipf("rust core FFI 不可用(先构建: cd rust-store && cargo build -p rust-store-ffi --locked): %v", err)
 	}
 	defer func() { _ = st.Close() }()
 

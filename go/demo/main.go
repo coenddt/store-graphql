@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	gostore "github.com/coenddt/go-store"
 
@@ -54,6 +55,14 @@ func run() error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/graphql", storegraphql.Handler(schema, storegraphql.Options{}))
+	srv := &http.Server{
+		Addr:              ":4000",
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second, // G114：慢速连接防悬挂（无超时 server 是安全缺陷）
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	log.Println("GraphQL endpoint: http://localhost:4000/graphql")
-	return http.ListenAndServe(":4000", mux)
+	return srv.ListenAndServe()
 }
