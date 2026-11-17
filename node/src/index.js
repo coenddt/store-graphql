@@ -171,6 +171,12 @@ function outType(fieldDefn, typeName) {
   return scalarFor(fieldDefn.type) || GraphQLJSON;
 }
 
+/**
+ * 模型字段定义 → graphql 字段映射表
+ * @param {any} fields 模型的 fields / computes
+ * @param {string} typeName 所属 GraphQL 类型名（嵌套字段命名前缀）
+ * @returns {Record<string, any>} 字段名 → GraphQLFieldConfig
+ */
 function mapFields(fields, typeName) {
   const out = {};
   for (const [k, v] of Object.entries(fields || {})) {
