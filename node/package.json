@@ -3,6 +3,16 @@
   "version": "1.0.0",
   "description": "GraphQL adapter that auto-generates standard GraphQL APIs for nodejs-store schemas (schema-driven CRUD over GQL, projection pushdown)",
   "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "require": "./src/index.js",
+      "default": "./src/index.js"
+    },
+    "./package.json": "./package.json",
+    "./*": "./*"
+  },
   "files": [
     "src"
   ],
