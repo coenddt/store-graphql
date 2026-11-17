@@ -10,6 +10,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { parse, execute } = require('graphql');
+const { runQuery: run } = require('./helpers/gql-test-helpers');
 
 let nodejsStore;
 let Database;
@@ -40,13 +41,7 @@ const DEFN = {
   },
 };
 
-async function run(schema, query, variableValues) {
-  const result = await execute({ schema, document: parse(query), variableValues });
-  if (result.errors && result.errors.length) {
-    throw new Error(`GraphQL 执行失败: ${result.errors.map((e) => e.message).join('; ')}`);
-  }
-  return result.data;
-}
+// run（execute + 错误聚合上抛）取自共用辅助文件，与 smoke.test.js 同一实现
 
 test(
   'e2e:真实 rust core + SQLite 的 GraphQL CRUD 全链路',

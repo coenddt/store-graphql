@@ -38,6 +38,11 @@ const MAX_QUERY_DEPTH = 10;
 // ── spec/04 复杂度守卫:AST 字段节点总数(别名不单列——字段计数已覆盖别名堆叠)──
 const MAX_QUERY_FIELDS = 300;
 
+// introspection 根字段（__schema / __type）：出现即判定为「用了 introspection」
+function isIntrospectionName(name) {
+  return name === '__schema' || name === '__type';
+}
+
 // 字段计数 + introspection 使用检测(fragment 展开计入,visiting 防环;__typename 放行)
 function queryFieldCount(document) {
   const fragments = {};
@@ -52,7 +57,7 @@ function queryFieldCount(document) {
       if (sel.kind === Kind.FIELD) {
         count += 1;
         const name = sel.name.value;
-        if (!introspectionUsed && (name === '__schema' || name === '__type')) {
+        if (!introspectionUsed && isIntrospectionName(name)) {
           introspectionUsed = true;
         }
         walkSelSet(sel.selectionSet, visiting);
@@ -188,15 +193,26 @@ function modelFields(defn) {
 }
 
 // ── spec/02：selection → GQL 投影串（fragments 展开 + @skip/@include 求值 + 空投影回退）──
+
+/** 是否为条件指令（@skip / @include） */
+function isConditionalDirective(d) {
+  const name = d.name.value;
+  return name === 'skip' || name === 'include';
+}
+
+/** 取条件指令的 if 实参求值；不可求值（缺参 / 非 variable|boolean / 变量未给）→ undefined */
+function directiveIfValue(d, vars) {
+  const ifArg = (d.arguments || []).find((a) => a.name.value === 'if');
+  if (!ifArg) return undefined;
+  if (ifArg.value.kind === Kind.VARIABLE) return vars ? vars[ifArg.value.name.value] : undefined;
+  if (ifArg.value.kind === Kind.BOOLEAN) return ifArg.value.value;
+  return undefined;
+}
+
 function shouldInclude(node, vars) {
   for (const d of node.directives || []) {
-    if (d.name.value !== 'skip' && d.name.value !== 'include') continue;
-    const ifArg = (d.arguments || []).find((a) => a.name.value === 'if');
-    if (!ifArg) continue;
-    let val;
-    if (ifArg.value.kind === Kind.VARIABLE) val = vars ? vars[ifArg.value.name.value] : undefined;
-    else if (ifArg.value.kind === Kind.BOOLEAN) val = ifArg.value.value;
-    else continue;
+    if (!isConditionalDirective(d)) continue;
+    const val = directiveIfValue(d, vars);
     if (val === undefined) continue;
     if (d.name.value === 'skip' && val) return false;
     if (d.name.value === 'include' && !val) return false;
@@ -236,13 +252,18 @@ function projectionFromResolveInfo(info) {
 const LIST_LIMIT_DEFAULT = 50;
 const LIST_LIMIT_MAX = 1000;
 
+/** 按 id 回查单行并取首行（get / update 回读共用）；查不到返回 null */
+async function queryByIdRow(store, name, idField, id, projection) {
+  const rows = await store.query(`${name}($condition:@c0) { ${projection} }`, {
+    c0: { [idField]: id },
+  });
+  return rows && rows[0] ? rows[0] : null;
+}
+
 function makeGet(store, name, idField) {
   return async (_src, args, _ctx, info) => {
     const projection = projectionFromResolveInfo(info);
-    const rows = await store.query(`${name}($condition:@c0) { ${projection} }`, {
-      c0: { [idField]: args.id },
-    });
-    return rows && rows[0] ? rows[0] : null;
+    return queryByIdRow(store, name, idField, args.id, projection);
   };
 }
 
@@ -316,10 +337,7 @@ function makeUpdate(store, name, idField) {
   return async (_src, args, _ctx, info) => {
     await store.update(name, { [idField]: args.id }, args.set);
     const projection = projectionFromResolveInfo(info);
-    const rows = await store.query(`${name}($condition:@c0) { ${projection} }`, {
-      c0: { [idField]: args.id },
-    });
-    return rows && rows[0] ? rows[0] : null;
+    return queryByIdRow(store, name, idField, args.id, projection);
   };
 }
 
@@ -331,6 +349,86 @@ function makeDelete(store, name, idField) {
 }
 
 // ── schema 构建 ──
+/** 单模型的 Query 字段（get / list）与 Mutation 字段（create / update / delete） */
+function buildModelFields(ctx, name, defn) {
+  const { store, idField, resolveWithOverride, queryFields, mutationFields } = ctx;
+  const modelType = new GraphQLObjectType({
+    name,
+    description: defn.description, // spec/05
+    fields: () => mapFields(modelFields(defn), name),
+  });
+  queryFields[`get${name}`] = {
+    type: modelType,
+    args: { id: { type: new GraphQLNonNull(GraphQLID) } },
+    resolve: resolveWithOverride(`Query.get${name}`, makeGet(store, name, idField)),
+  };
+  queryFields[`list${name}`] = {
+    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(modelType))),
+    args: {
+      condition: { type: GraphQLJSON },
+      sort: { type: GraphQLJSON },
+      limit: { type: GraphQLInt },
+    },
+    resolve: resolveWithOverride(`Query.list${name}`, makeList(store, name)),
+  };
+  if ((defn['x-graphql'] || {}).readonly) return; // spec/03 钩子 1：模型级 readonly → 只出 Query
+  mutationFields[`create${name}`] = {
+    type: modelType,
+    args: { input: { type: new GraphQLNonNull(GraphQLJSON) } },
+    resolve: resolveWithOverride(`Mutation.create${name}`, makeCreate(store, name)),
+  };
+  mutationFields[`update${name}`] = {
+    type: modelType,
+    args: {
+      id: { type: new GraphQLNonNull(GraphQLID) },
+      set: { type: new GraphQLNonNull(GraphQLJSON) },
+    },
+    resolve: resolveWithOverride(`Mutation.update${name}`, makeUpdate(store, name, idField)),
+  };
+  mutationFields[`delete${name}`] = {
+    type: new GraphQLNonNull(GraphQLBoolean),
+    args: { id: { type: new GraphQLNonNull(GraphQLID) } },
+    resolve: resolveWithOverride(`Mutation.delete${name}`, makeDelete(store, name, idField)),
+  };
+}
+
+/** 遍历模型清单：hidden 跳过（spec/03 钩子 1：模型级 hidden） */
+function addModelFields(ctx, names) {
+  for (const name of names) {
+    const defn = ctx.store.get(name);
+    if ((defn['x-graphql'] || {}).hidden) continue;
+    buildModelFields(ctx, name, defn);
+  }
+}
+
+/** spec/03 钩子 3：extend（SDL 同步追加），仅支持 Query/Mutation */
+function mergeExtensions(queryFields, mutationFields, extensions) {
+  for (const [key, fields] of Object.entries(extensions)) {
+    if (key === 'Query') Object.assign(queryFields, fields);
+    else if (key === 'Mutation') Object.assign(mutationFields, fields);
+    else throw new Error(`extensions 仅支持 Query/Mutation，收到 "${key}"（spec/03）`);
+  }
+}
+
+/** spec/03：override 键构建期校验，未知路径报错不静默 */
+function assertOverridesUsed(overrides, usedOverrideKeys) {
+  for (const key of Object.keys(overrides)) {
+    if (!usedOverrideKeys.has(key)) {
+      throw new Error(`override 路径 "${key}" 未命中任何生成字段（spec/03）`);
+    }
+  }
+}
+
+/** 组装最终 schema：无 Mutation 时不建 Mutation 类型 */
+function schemaOf(queryFields, mutationFields) {
+  return new GraphQLSchema({
+    query: new GraphQLObjectType({ name: 'Query', fields: () => queryFields }),
+    mutation: Object.keys(mutationFields).length
+      ? new GraphQLObjectType({ name: 'Mutation', fields: () => mutationFields })
+      : undefined,
+  });
+}
+
 function buildGraphQLSchema(store, opts = {}) {
   const idField = opts.idField || '_id';
   const overrides = opts.overrides || {};
@@ -350,71 +448,10 @@ function buildGraphQLSchema(store, opts = {}) {
     return fn || fallback;
   };
 
-  for (const name of names) {
-    const defn = store.get(name);
-    const xg = defn['x-graphql'] || {};
-    if (xg.hidden) continue; // spec/03 钩子 1：模型级 hidden
-    const modelType = new GraphQLObjectType({
-      name,
-      description: defn.description, // spec/05
-      fields: () => mapFields(modelFields(defn), name),
-    });
-    queryFields[`get${name}`] = {
-      type: modelType,
-      args: { id: { type: new GraphQLNonNull(GraphQLID) } },
-      resolve: resolveWithOverride(`Query.get${name}`, makeGet(store, name, idField)),
-    };
-    queryFields[`list${name}`] = {
-      type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(modelType))),
-      args: {
-        condition: { type: GraphQLJSON },
-        sort: { type: GraphQLJSON },
-        limit: { type: GraphQLInt },
-      },
-      resolve: resolveWithOverride(`Query.list${name}`, makeList(store, name)),
-    };
-    if (!xg.readonly) { // spec/03 钩子 1：模型级 readonly → 只出 Query
-      mutationFields[`create${name}`] = {
-        type: modelType,
-        args: { input: { type: new GraphQLNonNull(GraphQLJSON) } },
-        resolve: resolveWithOverride(`Mutation.create${name}`, makeCreate(store, name)),
-      };
-      mutationFields[`update${name}`] = {
-        type: modelType,
-        args: {
-          id: { type: new GraphQLNonNull(GraphQLID) },
-          set: { type: new GraphQLNonNull(GraphQLJSON) },
-        },
-        resolve: resolveWithOverride(`Mutation.update${name}`, makeUpdate(store, name, idField)),
-      };
-      mutationFields[`delete${name}`] = {
-        type: new GraphQLNonNull(GraphQLBoolean),
-        args: { id: { type: new GraphQLNonNull(GraphQLID) } },
-        resolve: resolveWithOverride(`Mutation.delete${name}`, makeDelete(store, name, idField)),
-      };
-    }
-  }
-
-  // spec/03 钩子 3：extend（SDL 同步追加）
-  for (const [key, fields] of Object.entries(extensions)) {
-    if (key === 'Query') Object.assign(queryFields, fields);
-    else if (key === 'Mutation') Object.assign(mutationFields, fields);
-    else throw new Error(`extensions 仅支持 Query/Mutation，收到 "${key}"（spec/03）`);
-  }
-
-  // spec/03：override 键构建期校验，未知路径报错不静默
-  for (const key of Object.keys(overrides)) {
-    if (!usedOverrideKeys.has(key)) {
-      throw new Error(`override 路径 "${key}" 未命中任何生成字段（spec/03）`);
-    }
-  }
-
-  return new GraphQLSchema({
-    query: new GraphQLObjectType({ name: 'Query', fields: () => queryFields }),
-    mutation: Object.keys(mutationFields).length
-      ? new GraphQLObjectType({ name: 'Mutation', fields: () => mutationFields })
-      : undefined,
-  });
+  addModelFields({ store, idField, resolveWithOverride, queryFields, mutationFields }, names);
+  mergeExtensions(queryFields, mutationFields, extensions); // spec/03 钩子 3：extend（SDL 同步追加）
+  assertOverridesUsed(overrides, usedOverrideKeys);          // spec/03：override 键构建期校验
+  return schemaOf(queryFields, mutationFields);
 }
 
 // ── spec/01：SDL 导出（喂客户端 codegen）──
@@ -460,24 +497,29 @@ function stableErrorCode(message) {
 // （不设 extensions.http.status；剥前缀属展示层，走 opts.maskError）
 // 形参仅 (error)：yoga 以 (error, message, isDev) 调用，本默认实现只需 error（message 原文保留、
 // isDev 不参与判决），多余实参由 JS 容忍
-function defaultMaskError(error) {
-  const orig = (error && error.originalError) || error;
-  if (!isPermissionClass(error) && !isPermissionClass(orig)) {
-    const raw = String((error && error.message) || (orig && orig.message) || '');
-    const code = stableErrorCode(raw);
-    if (!code) return error;
-    return new GraphQLError(raw, {
-      nodes: error && error.nodes,
-      path: error && error.path,
-      originalError: orig,
-      extensions: {
-        ...((error && error.extensions) || {}),
-        // 已有 code（如守卫的旧值 ERR_DEPTH）原地不动，只补缺失的；
-        // 规范化码另置 normalizedCode，由守卫自己写入。
-        code: (error && error.extensions && error.extensions.code) || code,
-      },
-    });
-  }
+/** 掩码用原始消息：优先 error.message，其次 originalError.message，缺省空串 */
+function maskMessageOf(error, orig) {
+  const m = (error && error.message) || (orig && orig.message);
+  return String(m || '');
+}
+
+/** 非权限错误的掩码：保留原文与定位信息，缺失的 extensions.code 用稳定码补齐 */
+function codedMasked(error, orig, raw, code) {
+  return new GraphQLError(raw, {
+    nodes: error && error.nodes,
+    path: error && error.path,
+    originalError: orig,
+    extensions: {
+      ...((error && error.extensions) || {}),
+      // 已有 code（如守卫的旧值 ERR_DEPTH）原地不动，只补缺失的；
+      // 规范化码另置 normalizedCode，由守卫自己写入。
+      code: (error && error.extensions && error.extensions.code) || code,
+    },
+  });
+}
+
+/** 权限类（含同档 NoContext）掩码：extensions.code 定 FORBIDDEN，message 保留原样 */
+function forbiddenMasked(error, orig) {
   return new GraphQLError(String((error && error.message) || ''), {
     nodes: error && error.nodes,
     path: error && error.path,
@@ -489,9 +531,21 @@ function defaultMaskError(error) {
   });
 }
 
-function createYoga(store, opts = {}) {
-  // fail-secure 装配守卫：宿主开启上下文强制却未配 contextFactory 时，装配期即拒绝
-  // （fail-fast）；否则每请求在运行期以 ERR_NO_CONTEXT 失败（no-error-masking）。
+function defaultMaskError(error) {
+  const orig = (error && error.originalError) || error;
+  if (isPermissionClass(error) || isPermissionClass(orig)) {
+    return forbiddenMasked(error, orig);
+  }
+  const raw = maskMessageOf(error, orig);
+  const code = stableErrorCode(raw);
+  return code ? codedMasked(error, orig, raw, code) : error;
+}
+
+/**
+ * fail-secure 装配守卫：宿主开启上下文强制却未配 contextFactory 时，装配期即拒绝
+ * （fail-fast）；否则每请求在运行期以 ERR_NO_CONTEXT 失败（no-error-masking）。
+ */
+function assertSecureConfig(store, opts) {
   if (typeof store.requireContext === 'function' && store.requireContext() && !opts.contextFactory) {
     throw new Error(
       'ERR_SECURE_CONFIG: 宿主已开启上下文强制（fail-secure）但未配置 opts.contextFactory；'
@@ -499,90 +553,90 @@ function createYoga(store, opts = {}) {
       + '无需鉴权的内部服务请显式 store.setRequireContext(false) 后再装配',
     );
   }
-  // R2-04：policyProvider 可选注入（进程级全局单值状态，默认关闭 = 现状零变化）。
-  // 视图派生只许 store.baseView().withPolicy(overrides)（皮侧禁自持 Registry——R2-04 §7），
-  // 作用域原语 withScope 为 nodejs-store optional peer，仅注入 policyProvider 时才加载。
-  const policyProvider = opts.policyProvider || null;
-  let withScopeFn = null;
-  if (policyProvider) {
-    if (typeof store.baseView !== 'function') {
-      throw new Error(
-        'ERR_POLICY_PROVIDER_CONFIG: 注入 policyProvider 需要宿主 store.baseView()'
-        + '（nodejs-store 提供）；皮侧禁自持 Registry 派生视图（R2-04 §7）',
-      );
-    }
-    try {
-      withScopeFn = require('nodejs-store').withScope;
-    } catch (e) {
-      throw new Error(`ERR_DEPENDENCY_MISSING: 注入 policyProvider 需要安装 nodejs-store（withScope）: ${(e && e.message) || e}`);
-    }
+}
+
+// R2-04：policyProvider 可选注入（进程级全局单值状态，默认关闭 = 现状零变化）。
+// 视图派生只许 store.baseView().withPolicy(overrides)（皮侧禁自持 Registry——R2-04 §7），
+// 作用域原语 withScope 为 nodejs-store optional peer，仅注入 policyProvider 时才加载。
+function resolveWithScope(store) {
+  if (typeof store.baseView !== 'function') {
+    throw new Error(
+      'ERR_POLICY_PROVIDER_CONFIG: 注入 policyProvider 需要宿主 store.baseView()'
+      + '（nodejs-store 提供）；皮侧禁自持 Registry 派生视图（R2-04 §7）',
+    );
   }
-  let yogaMod;
   try {
-    yogaMod = require('graphql-yoga');
+    return require('nodejs-store').withScope;
+  } catch (e) {
+    throw new Error(`ERR_DEPENDENCY_MISSING: 注入 policyProvider 需要安装 nodejs-store（withScope）: ${(e && e.message) || e}`);
+  }
+}
+
+/** 加载 graphql-yoga（可选依赖） */
+function loadYoga() {
+  try {
+    return require('graphql-yoga');
   } catch {
     throw new Error('使用 createYoga 需要安装 graphql-yoga（npm i graphql-yoga）；或仅用 buildGraphQLSchema 自行承载');
   }
-  const { createYoga: createYogaImpl } = yogaMod;
-  const schema = opts.schema || buildGraphQLSchema(store, opts);
-  const depthLimit = opts.maxQueryDepth != null ? opts.maxQueryDepth : MAX_QUERY_DEPTH;
-  const fieldsLimit = opts.maxQueryFields != null ? opts.maxQueryFields : MAX_QUERY_FIELDS;
-  const introspectionEnabled = opts.introspection !== false;
-  const yoga = createYogaImpl({
-    schema,
-    logging: opts.logging != null ? opts.logging : false,
-    // spec/04：请求体上限 1MB(Yoga 默认 25MB,显式收窄对齐 store-api 三端)
-    maxRequestBodySize: 1 << 20,
-    // spec/04：默认自定义掩码（原样透出 + 权限错误 403）；maskedErrors 直通 Yoga，maskError 单独覆盖
-    // （Yoga v5 只认对象形态，传裸函数会被静默忽略退回默认掩码）
-    maskedErrors: opts.maskedErrors !== undefined
-      ? opts.maskedErrors
-      : { maskError: opts.maskError || defaultMaskError },
-    // spec/04:深度/复杂度/introspection 守卫(onExecute 期拦截,extensions.http.status 定 400)
-    plugins: [
-      {
-        onExecute({ args }) {
-          const d = queryDepthOf(args.document);
-          if (d > depthLimit) {
-            throw new GraphQLError(`ERR_DEPTH:查询深度 ${d} 超过上限 ${depthLimit}`, {
-              extensions: { code: 'ERR_DEPTH', normalizedCode: 'DEPTH', http: { status: 400 } },
-            });
-          }
-          const { fields, introspectionUsed } = queryFieldCount(args.document);
-          if (introspectionUsed && !introspectionEnabled) {
-            throw new GraphQLError('ERR_INTROSPECTION:introspection 已禁用', {
-              extensions: { code: 'ERR_INTROSPECTION', normalizedCode: 'INTROSPECTION', http: { status: 400 } },
-            });
-          }
-          if (fields > fieldsLimit) {
-            throw new GraphQLError(`ERR_COMPLEXITY:查询字段数 ${fields} 超过上限 ${fieldsLimit}`, {
-              extensions: { code: 'ERR_COMPLEXITY', normalizedCode: 'COMPLEXITY', http: { status: 400 } },
-            });
-          }
-        },
-      },
-    ],
-    // spec/04：context 在包装层注入（Yoga 的 context factory 无法自定义 HTTP 状态码）
-    context: undefined,
-    // 承载端点（Yoga 原生选项 graphqlEndpoint；缺省 /graphql。store-gateway 组合时透传自定义路径）
-    ...(opts.endpoint ? { graphqlEndpoint: opts.endpoint } : {}),
-  });
-  // 包装层：每请求先跑 contextFactory 并按 spec/04 分类（403/401），再进 Yoga 执行
-  const handler = async (req, serverCtx) => {
+}
+
+/** 深度守卫：超限以 ERR_DEPTH 拦截（http 400） */
+function assertDepth(document, depthLimit) {
+  const d = queryDepthOf(document);
+  if (d > depthLimit) {
+    throw new GraphQLError(`ERR_DEPTH:查询深度 ${d} 超过上限 ${depthLimit}`, {
+      extensions: { code: 'ERR_DEPTH', normalizedCode: 'DEPTH', http: { status: 400 } },
+    });
+  }
+}
+
+/** 复杂度 / introspection 守卫：超限或禁用期使用 introspection 均以 http 400 拦截 */
+function assertFieldBudget(document, fieldsLimit, introspectionEnabled) {
+  const { fields, introspectionUsed } = queryFieldCount(document);
+  if (introspectionUsed && !introspectionEnabled) {
+    throw new GraphQLError('ERR_INTROSPECTION:introspection 已禁用', {
+      extensions: { code: 'ERR_INTROSPECTION', normalizedCode: 'INTROSPECTION', http: { status: 400 } },
+    });
+  }
+  if (fields > fieldsLimit) {
+    throw new GraphQLError(`ERR_COMPLEXITY:查询字段数 ${fields} 超过上限 ${fieldsLimit}`, {
+      extensions: { code: 'ERR_COMPLEXITY', normalizedCode: 'COMPLEXITY', http: { status: 400 } },
+    });
+  }
+}
+
+/** spec/04:深度/复杂度/introspection 守卫(onExecute 期拦截,extensions.http.status 定 400) */
+function guardPlugin(depthLimit, fieldsLimit, introspectionEnabled) {
+  return {
+    onExecute({ args }) {
+      assertDepth(args.document, depthLimit);
+      assertFieldBudget(args.document, fieldsLimit, introspectionEnabled);
+    },
+  };
+}
+
+/**
+ * 每请求注入上下文：同步 contextFactory 走快路径——不引入 await 微任务，
+ * 避免 AsyncLocalStorage.enterWith 在微任务里落地致上下文传不到 resolver
+ * （返回 null 同样显式落地清除）。
+ */
+async function applyContext(store, contextFactory, req, serverCtx) {
+  const maybe = contextFactory({ request: req, serverContext: serverCtx });
+  const ctx = maybe && typeof maybe.then === 'function' ? await maybe : maybe;
+  store.setContext(ctx != null ? ctx : null);
+  return ctx;
+}
+
+/** 包装层：每请求先跑 contextFactory 并按 spec/04 分类（403/401），再进 Yoga 执行 */
+function createHandler(store, yoga, opts, policyProvider, withScopeFn) {
+  return async (req, serverCtx) => {
     let ctx = null;
     if (opts.contextFactory) {
       try {
-        // spec/04：每请求注入；同步 contextFactory 走快路径——不引入 await 微任务，
-        // 避免 AsyncLocalStorage.enterWith 在微任务里落地致上下文传不到 resolver（返回 null 同样显式落地清除）
-        const maybe = opts.contextFactory({ request: req, serverContext: serverCtx });
-        ctx = maybe && typeof maybe.then === 'function' ? await maybe : maybe;
-        store.setContext(ctx != null ? ctx : null);
+        ctx = await applyContext(store, opts.contextFactory, req, serverCtx);
       } catch (e) {
-        const status = isPermissionClass(e) ? 403 : 401;
-        return new Response(
-          JSON.stringify({ errors: [{ message: String((e && e.message) || e) }] }),
-          { status, headers: { 'Content-Type': 'application/json' } }
-        );
+        return classifiedErrorResponse(e);
       }
     }
     // R2-04：policyProvider 收已解析 ctx（未配 contextFactory ⇒ null，禁二次调用 provider）；
@@ -594,22 +648,60 @@ function createYoga(store, opts = {}) {
         const view = overrides ? store.baseView().withPolicy(overrides) : null;
         return withScopeFn(view ? { view } : null, () => yoga(req, serverCtx));
       } catch (e) {
-        const status = isPermissionClass(e) ? 403 : 401;
-        return new Response(
-          JSON.stringify({ errors: [{ message: String((e && e.message) || e) }] }),
-          { status, headers: { 'Content-Type': 'application/json' } }
-        );
+        return classifiedErrorResponse(e);
       }
     }
     return yoga(req, serverCtx);
   };
-  return { yoga: handler, schema };
+}
+
+/**
+ * spec/04：默认自定义掩码（原样透出 + 权限错误 403）；maskedErrors 直通 Yoga，maskError 单独覆盖
+ * （Yoga v5 只认对象形态，传裸函数会被静默忽略退回默认掩码）。
+ */
+function resolveMaskedErrors(opts) {
+  if (opts.maskedErrors !== undefined) return opts.maskedErrors;
+  return { maskError: opts.maskError || defaultMaskError };
+}
+
+function createYoga(store, opts = {}) {
+  assertSecureConfig(store, opts);
+  const policyProvider = opts.policyProvider || null;
+  const withScopeFn = policyProvider ? resolveWithScope(store) : null;
+  const { createYoga: createYogaImpl } = loadYoga();
+  const schema = opts.schema || buildGraphQLSchema(store, opts);
+  const depthLimit = opts.maxQueryDepth != null ? opts.maxQueryDepth : MAX_QUERY_DEPTH;
+  const fieldsLimit = opts.maxQueryFields != null ? opts.maxQueryFields : MAX_QUERY_FIELDS;
+  const introspectionEnabled = opts.introspection !== false;
+  const yoga = createYogaImpl({
+    schema,
+    logging: opts.logging != null ? opts.logging : false,
+    // spec/04：请求体上限 1MB(Yoga 默认 25MB,显式收窄对齐 store-api 三端)
+    maxRequestBodySize: 1 << 20,
+    maskedErrors: resolveMaskedErrors(opts),
+    plugins: [guardPlugin(depthLimit, fieldsLimit, introspectionEnabled)],
+    // spec/04：context 在包装层注入（Yoga 的 context factory 无法自定义 HTTP 状态码）
+    context: undefined,
+    // 承载端点（Yoga 原生选项 graphqlEndpoint；缺省 /graphql。store-gateway 组合时透传自定义路径）
+    ...(opts.endpoint ? { graphqlEndpoint: opts.endpoint } : {}),
+  });
+  return { yoga: createHandler(store, yoga, opts, policyProvider, withScopeFn), schema };
 }
 
 // ── spec/04：HTTP 承载（Fastify 插件；宿主与 store-gateway 的统一入口）──
 // 默认 path '/graphql'；opts 透传 createYoga（contextFactory / 守卫阈值 / maskError / schema / resources / idField ...）
 // 回拷响应头剔除长度/编码类：body 已经 res.text() 解码，原 content-length / content-encoding 与实际不符
 const SKIP_RES_HEADERS = new Set(['content-length', 'content-encoding', 'transfer-encoding']);
+
+// spec/04：错误分类响应——权限类 403、其余 401，body 只含 message（不泄栈）。
+// contextFactory / policyProvider 两处 catch 共用（同一分类与同一 JSON 形状）。
+function classifiedErrorResponse(e) {
+  const status = isPermissionClass(e) ? 403 : 401;
+  return new Response(
+    JSON.stringify({ errors: [{ message: String((e && e.message) || e) }] }),
+    { status, headers: { 'Content-Type': 'application/json' } }
+  );
+}
 
 async function graphqlPlugin(fastify, opts = {}) {
   const { store, path: gqlPath = '/graphql', ...yogaOpts } = opts;

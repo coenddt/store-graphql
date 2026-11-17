@@ -59,28 +59,24 @@ const makeQueryStore = (errFactory) => ({
   },
 });
 
-test('非权限 ERR_* 前缀补 extensions.code（message 原样保留）', async () => {
-  const { yoga } = createYoga(
-    makeQueryStore(() => new Error(
-      'ERR_NOT_FOUND:目标记录不存在（写条件未命中任何行，_id 不存在或已被删除）',
-    )),
-    { contextFactory: async () => ({ user: 'u1' }) },
-  );
+/** 两分类用例共用前奏：以给定错误工厂装配 yoga 并发出一次 listUser 查询（HTTP 200 口径） */
+async function runOnce(errFactory) {
+  const { yoga } = createYoga(makeQueryStore(errFactory), { contextFactory: async () => ({ user: 'u1' }) });
   const res = await yoga(mkQueryRequest('{ listUser { _id } }'));
   assert.equal(res.status, 200);
-  const err = (await res.json()).errors[0];
+  return (await res.json()).errors[0];
+}
+
+test('非权限 ERR_* 前缀补 extensions.code（message 原样保留）', async () => {
+  const err = await runOnce(() => new Error(
+    'ERR_NOT_FOUND:目标记录不存在（写条件未命中任何行，_id 不存在或已被删除）',
+  ));
   assert.equal(err.extensions.code, 'NOT_FOUND');
   assert.ok(err.message.startsWith('ERR_NOT_FOUND:'), err.message);
 });
 
 test('越权错误：执行期 HTTP 200 + FORBIDDEN（GraphQL over HTTP 执行期错误口径）', async () => {
-  const { yoga } = createYoga(
-    makeQueryStore(() => new Error('ERR_PERMISSION:RBAC:无权写入')),
-    { contextFactory: async () => ({ user: 'u1' }) },
-  );
-  const res = await yoga(mkQueryRequest('{ listUser { _id } }'));
-  assert.equal(res.status, 200);
-  const err = (await res.json()).errors[0];
+  const err = await runOnce(() => new Error('ERR_PERMISSION:RBAC:无权写入'));
   assert.equal(err.extensions.code, 'FORBIDDEN');
   assert.equal(err.message, 'ERR_PERMISSION:RBAC:无权写入');
 });
