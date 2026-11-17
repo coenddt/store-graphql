@@ -27,7 +27,6 @@ const {
   GraphQLBoolean,
   GraphQLError,
   Kind,
-  parse,
   printSchema,
 } = require('graphql');
 
@@ -459,7 +458,9 @@ function stableErrorCode(message) {
 // `ERR_*` 前缀错误额外补 extensions.code（如 ERR_NOT_FOUND → NOT_FOUND），message 原文保留；
 // 权限类错误执行期仍走 GraphQL over HTTP 的 200，靠 extensions.code = FORBIDDEN 区分
 // （不设 extensions.http.status；剥前缀属展示层，走 opts.maskError）
-function defaultMaskError(error, message, isDev) {
+// 形参仅 (error)：yoga 以 (error, message, isDev) 调用，本默认实现只需 error（message 原文保留、
+// isDev 不参与判决），多余实参由 JS 容忍
+function defaultMaskError(error) {
   const orig = (error && error.originalError) || error;
   if (!isPermissionClass(error) && !isPermissionClass(orig)) {
     const raw = String((error && error.message) || (orig && orig.message) || '');
@@ -511,7 +512,6 @@ function createYoga(store, opts = {}) {
       );
     }
     try {
-      // eslint-disable-next-line global-require
       withScopeFn = require('nodejs-store').withScope;
     } catch (e) {
       throw new Error(`ERR_DEPENDENCY_MISSING: 注入 policyProvider 需要安装 nodejs-store（withScope）: ${(e && e.message) || e}`);
@@ -519,9 +519,8 @@ function createYoga(store, opts = {}) {
   }
   let yogaMod;
   try {
-    // eslint-disable-next-line global-require
     yogaMod = require('graphql-yoga');
-  } catch (e) {
+  } catch {
     throw new Error('使用 createYoga 需要安装 graphql-yoga（npm i graphql-yoga）；或仅用 buildGraphQLSchema 自行承载');
   }
   const { createYoga: createYogaImpl } = yogaMod;
