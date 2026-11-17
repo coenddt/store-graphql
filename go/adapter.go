@@ -580,6 +580,111 @@ func makeDelete(st Store, name, idField string) graphql.FieldResolveFn {
 
 // ── schema 构建 ──
 
+// schemaIndex 模型名清单 + defn 索引（spec/01：go-store 不回读 defn，按 Schemas 键序生成；
+// 默认归档过滤，IncludeArchived=true 为显式开关；`__` 保留名过滤始终生效）。
+func schemaIndex(opts Options) ([]string, map[string]map[string]any) {
+	names := opts.Resources
+	if names == nil {
+		names = make([]string, 0, len(opts.Schemas))
+		for _, defn := range opts.Schemas {
+			if n, _ := defn["name"].(string); n != "" {
+				names = append(names, n)
+			}
+		}
+	}
+	byName := map[string]map[string]any{}
+	for _, defn := range opts.Schemas {
+		if n, _ := defn["name"].(string); n != "" {
+			byName[n] = defn
+		}
+	}
+	if !opts.IncludeArchived {
+		names = FilterArchived(names)
+	}
+	names = filterReserved(names)
+	return names, byName
+}
+
+// buildModelEntry 生成单模型的 Query(get/list) 与 Mutation(create/update/delete) 字段
+// （spec/03 钩子 1：x-graphql.hidden 整模型隐藏；readonly → 只出 Query）。
+func buildModelEntry(
+	st Store, opts Options,
+	resolveWithOverride func(string, graphql.FieldResolveFn) graphql.FieldResolveFn,
+	name string, defn map[string]any,
+	queryFields, mutationFields graphql.Fields,
+) {
+	xg, _ := defn["x-graphql"].(map[string]any)
+	if xg != nil {
+		if hidden, _ := xg["hidden"].(bool); hidden {
+			return
+		}
+	}
+	allFields := defnFieldKeys(defn)
+	modelType := graphql.NewObject(graphql.ObjectConfig{
+		Name:        name,
+		Description: descOf(defn), // spec/05
+		Fields:      fieldsMap(modelFields(defn), name),
+	})
+
+	queryFields["get"+name] = &graphql.Field{
+		Type:    modelType,
+		Args:    graphql.FieldConfigArgument{"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}},
+		Resolve: resolveWithOverride("Query.get"+name, makeGet(st, name, opts.IDField, allFields)),
+	}
+	queryFields["list"+name] = &graphql.Field{
+		Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(modelType))),
+		Args: graphql.FieldConfigArgument{
+			"condition": &graphql.ArgumentConfig{Type: jsonScalar},
+			"sort":      &graphql.ArgumentConfig{Type: jsonScalar},
+			"limit":     &graphql.ArgumentConfig{Type: graphql.Int},
+		},
+		Resolve: resolveWithOverride("Query.list"+name, makeList(st, name, allFields)),
+	}
+	readonly := false
+	if xg != nil {
+		readonly, _ = xg["readonly"].(bool)
+	}
+	if !readonly { // spec/03 钩子 1：readonly → 只出 Query
+		mutationFields["create"+name] = &graphql.Field{
+			Type:    modelType,
+			Args:    graphql.FieldConfigArgument{"input": &graphql.ArgumentConfig{Type: graphql.NewNonNull(jsonScalar)}},
+			Resolve: resolveWithOverride("Mutation.create"+name, makeCreate(st, name)),
+		}
+		mutationFields["update"+name] = &graphql.Field{
+			Type: modelType,
+			Args: graphql.FieldConfigArgument{
+				"id":  &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)},
+				"set": &graphql.ArgumentConfig{Type: graphql.NewNonNull(jsonScalar)},
+			},
+			Resolve: resolveWithOverride("Mutation.update"+name, makeUpdate(st, name, opts.IDField, allFields)),
+		}
+		mutationFields["delete"+name] = &graphql.Field{
+			Type:    graphql.NewNonNull(graphql.Boolean),
+			Args:    graphql.FieldConfigArgument{"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}},
+			Resolve: resolveWithOverride("Mutation.delete"+name, makeDelete(st, name, opts.IDField)),
+		}
+	}
+}
+
+// applyExtensions spec/03 钩子 3：extensions 合并（仅支持 Query/Mutation，未知键构建报错）。
+func applyExtensions(queryFields, mutationFields graphql.Fields, extensions map[string]graphql.Fields) error {
+	for key, fields := range extensions {
+		switch key {
+		case "Query":
+			for f, v := range fields {
+				queryFields[f] = v
+			}
+		case "Mutation":
+			for f, v := range fields {
+				mutationFields[f] = v
+			}
+		default:
+			return fmt.Errorf("extensions 仅支持 Query/Mutation，收到 %q（spec/03）", key)
+		}
+	}
+	return nil
+}
+
 // Build 程序化构建标准 GraphQL schema（spec/01 生成面）。
 func Build(st Store, opts Options) (graphql.Schema, error) {
 	var schema graphql.Schema
@@ -598,28 +703,7 @@ func Build(st Store, opts Options) (graphql.Schema, error) {
 		return fallback
 	}
 
-	// 模型 defn 依据（spec/01）：go-store 不回读 defn，按 Schemas 传入的 defn 键序生成
-	names := opts.Resources
-	if names == nil {
-		names = make([]string, 0, len(opts.Schemas))
-		for _, defn := range opts.Schemas {
-			if n, _ := defn["name"].(string); n != "" {
-				names = append(names, n)
-			}
-		}
-	}
-	byName := map[string]map[string]any{}
-	for _, defn := range opts.Schemas {
-		if n, _ := defn["name"].(string); n != "" {
-			byName[n] = defn
-		}
-	}
-	// spec/01：默认归档过滤；IncludeArchived=true 为显式开关（点名要看归档的人能拿到）。
-	// `__` 保留名过滤始终生效。
-	if !opts.IncludeArchived {
-		names = FilterArchived(names)
-	}
-	names = filterReserved(names)
+	names, byName := schemaIndex(opts)
 
 	queryFields := graphql.Fields{}
 	mutationFields := graphql.Fields{}
@@ -628,72 +712,11 @@ func Build(st Store, opts Options) (graphql.Schema, error) {
 		if defn == nil {
 			return schema, fmt.Errorf("模型 %q 未在 Options.Schemas 中提供 defn（spec/01）", name)
 		}
-		xg, _ := defn["x-graphql"].(map[string]any)
-		if xg != nil {
-			if hidden, _ := xg["hidden"].(bool); hidden { // spec/03 钩子 1
-				continue
-			}
-		}
-		allFields := defnFieldKeys(defn)
-		modelType := graphql.NewObject(graphql.ObjectConfig{
-			Name:        name,
-			Description: descOf(defn), // spec/05
-			Fields:      fieldsMap(modelFields(defn), name),
-		})
-
-		queryFields["get"+name] = &graphql.Field{
-			Type:    modelType,
-			Args:    graphql.FieldConfigArgument{"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}},
-			Resolve: resolveWithOverride("Query.get"+name, makeGet(st, name, opts.IDField, allFields)),
-		}
-		queryFields["list"+name] = &graphql.Field{
-			Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(modelType))),
-			Args: graphql.FieldConfigArgument{
-				"condition": &graphql.ArgumentConfig{Type: jsonScalar},
-				"sort":      &graphql.ArgumentConfig{Type: jsonScalar},
-				"limit":     &graphql.ArgumentConfig{Type: graphql.Int},
-			},
-			Resolve: resolveWithOverride("Query.list"+name, makeList(st, name, allFields)),
-		}
-		readonly := false
-		if xg != nil {
-			readonly, _ = xg["readonly"].(bool)
-		}
-		if !readonly { // spec/03 钩子 1：readonly → 只出 Query
-			mutationFields["create"+name] = &graphql.Field{
-				Type:    modelType,
-				Args:    graphql.FieldConfigArgument{"input": &graphql.ArgumentConfig{Type: graphql.NewNonNull(jsonScalar)}},
-				Resolve: resolveWithOverride("Mutation.create"+name, makeCreate(st, name)),
-			}
-			mutationFields["update"+name] = &graphql.Field{
-				Type: modelType,
-				Args: graphql.FieldConfigArgument{
-					"id":  &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)},
-					"set": &graphql.ArgumentConfig{Type: graphql.NewNonNull(jsonScalar)},
-				},
-				Resolve: resolveWithOverride("Mutation.update"+name, makeUpdate(st, name, opts.IDField, allFields)),
-			}
-			mutationFields["delete"+name] = &graphql.Field{
-				Type:    graphql.NewNonNull(graphql.Boolean),
-				Args:    graphql.FieldConfigArgument{"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}},
-				Resolve: resolveWithOverride("Mutation.delete"+name, makeDelete(st, name, opts.IDField)),
-			}
-		}
+		buildModelEntry(st, opts, resolveWithOverride, name, defn, queryFields, mutationFields)
 	}
 
-	for key, fields := range extensions { // spec/03 钩子 3
-		switch key {
-		case "Query":
-			for f, v := range fields {
-				queryFields[f] = v
-			}
-		case "Mutation":
-			for f, v := range fields {
-				mutationFields[f] = v
-			}
-		default:
-			return schema, fmt.Errorf("extensions 仅支持 Query/Mutation，收到 %q（spec/03）", key)
-		}
+	if err := applyExtensions(queryFields, mutationFields, extensions); err != nil {
+		return schema, err
 	}
 
 	for key := range overrides { // spec/03：未知路径构建报错不静默

@@ -370,17 +370,10 @@ func TestQueryDepthGuard(t *testing.T) {
 	st := newMockStore(t)
 	schema := buildTestSchema(t, st, Options{})
 	handler := Handler(schema, Options{MaxQueryDepth: 2})
-	post := func(query string) *httptest.ResponseRecorder {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(query))
-		req.Header.Set("Content-Type", "application/json")
-		handler(rec, req)
-		return rec
-	}
-	if rec := post(`{"query":"{ listUser { _id } }"}`); rec.Code != http.StatusOK {
+	if rec := postGraphQL(handler, `{"query":"{ listUser { _id } }"}`); rec.Code != http.StatusOK {
 		t.Fatalf("深度 2 应放行,实际 %d", rec.Code)
 	}
-	rec := post(`{"query":"{ listUser { profile { bio } } }"}`)
+	rec := postGraphQL(handler, `{"query":"{ listUser { profile { bio } } }"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("深度 3 应 400,实际 %d", rec.Code)
 	}
@@ -409,18 +402,11 @@ func TestComplexityAndIntrospectionGuard(t *testing.T) {
 	st := newMockStore(t)
 	schema := buildTestSchema(t, st, Options{})
 	handler := Handler(schema, Options{MaxQueryFields: 2, DisableIntrospection: true})
-	post := func(query string) *httptest.ResponseRecorder {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(query))
-		req.Header.Set("Content-Type", "application/json")
-		handler(rec, req)
-		return rec
-	}
 
-	if rec := post(`{"query":"{ listUser { _id } }"}`); rec.Code != http.StatusOK {
+	if rec := postGraphQL(handler, `{"query":"{ listUser { _id } }"}`); rec.Code != http.StatusOK {
 		t.Fatalf("字段数 2(边界)应放行,实际 %d", rec.Code)
 	}
-	rec := post(`{"query":"{ listUser { _id name } }"}`)
+	rec := postGraphQL(handler, `{"query":"{ listUser { _id name } }"}`)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ERR_COMPLEXITY:") {
 		t.Fatalf("超字段上限应 400 + ERR_COMPLEXITY:,实际 %d %s", rec.Code, rec.Body.String())
 	}
@@ -428,10 +414,10 @@ func TestComplexityAndIntrospectionGuard(t *testing.T) {
 		!strings.Contains(rec.Body.String(), `"normalizedCode":"COMPLEXITY"`) {
 		t.Fatalf("复杂度守卫应保留旧码并新增规范化码: %s", rec.Body.String())
 	}
-	if rec := post(`{"query":"{ __typename }"}`); rec.Code != http.StatusOK {
+	if rec := postGraphQL(handler, `{"query":"{ __typename }"}`); rec.Code != http.StatusOK {
 		t.Fatalf("__typename 应放行,实际 %d", rec.Code)
 	}
-	rec = post(`{"query":"{ __schema { queryType { name } } }"}`)
+	rec = postGraphQL(handler, `{"query":"{ __schema { queryType { name } } }"}`)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ERR_INTROSPECTION:") {
 		t.Fatalf("禁用后 __schema 应 400 + ERR_INTROSPECTION:,实际 %d %s", rec.Code, rec.Body.String())
 	}
@@ -439,6 +425,15 @@ func TestComplexityAndIntrospectionGuard(t *testing.T) {
 		!strings.Contains(rec.Body.String(), `"normalizedCode":"INTROSPECTION"`) {
 		t.Fatalf("introspection 守卫应保留旧码并新增规范化码: %s", rec.Body.String())
 	}
+}
+
+// postGraphQL 守卫用例公共通道：向 handler 发一条 POST /graphql JSON 请求并返回响应记录。
+func postGraphQL(handler http.HandlerFunc, query string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(query))
+	req.Header.Set("Content-Type", "application/json")
+	handler(rec, req)
+	return rec
 }
 
 // errString 轻量 error 实现（前缀契约测试用）。
@@ -539,26 +534,22 @@ func TestAnnotationsAndOverride(t *testing.T) {
 	}
 
 	// override：命中替换 + 未知路径报错
-	st2 := newMockStore(t)
-	_, err := Build(st2, Options{
-		Schemas: []map[string]any{defnMap(t)},
-		Overrides: map[string]graphql.FieldResolveFn{
-			"Query.listUser": func(_ graphql.ResolveParams) (interface{}, error) {
-				return []map[string]any{{"_id": "x", "name": "override"}}, nil
+	listUserOverride := func() Options {
+		return Options{
+			Schemas: []map[string]any{defnMap(t)},
+			Overrides: map[string]graphql.FieldResolveFn{
+				"Query.listUser": func(_ graphql.ResolveParams) (interface{}, error) {
+					return []map[string]any{{"_id": "x", "name": "override"}}, nil
+				},
 			},
-		},
-	})
+		}
+	}
+	st2 := newMockStore(t)
+	_, err := Build(st2, listUserOverride())
 	if err != nil {
 		t.Fatalf("带 override 的 Build 失败: %v", err)
 	}
-	ov := do(t, buildTestSchema(t, st2, Options{
-		Schemas: []map[string]any{defnMap(t)},
-		Overrides: map[string]graphql.FieldResolveFn{
-			"Query.listUser": func(_ graphql.ResolveParams) (interface{}, error) {
-				return []map[string]any{{"_id": "x", "name": "override"}}, nil
-			},
-		},
-	}), `{ listUser { name } }`, nil)
+	ov := do(t, buildTestSchema(t, st2, listUserOverride()), `{ listUser { name } }`, nil)
 	if ov.Data.(map[string]interface{})["listUser"].([]interface{})[0].(map[string]interface{})["name"] != "override" {
 		t.Fatalf("override 未生效: %v", ov.Data)
 	}
