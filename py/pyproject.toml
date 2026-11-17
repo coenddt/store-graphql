@@ -9,6 +9,7 @@ keywords = ["py-store", "storepy", "graphql", "crud", "gql"]
 dependencies = ["graphql-core>=3.2"]
 
 [project.optional-dependencies]
+store = ["storepy>=6.0.0,<7.0.0"]
 fastapi = ["fastapi>=0.110"]
 dev = ["pytest>=8", "fastapi>=0.110", "httpx>=0.27"]
 

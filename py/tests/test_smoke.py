@@ -11,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "py-store" / "src")
 
 import pytest
 from graphql import GraphQLBoolean, GraphQLField, graphql
-
 from store_graphql import build_graphql_schema, create_app, export_sdl, filter_archived
 
 DEFN = {
@@ -61,7 +60,9 @@ class MockStore:
         return row
 
     async def remove(self, _name, cond):
-        self.rows = [r for r in self.rows if not all(r.get(k) == v for k, v in cond.items())]
+        self.rows = [
+            r for r in self.rows if not all(r.get(k) == v for k, v in cond.items())
+        ]
 
     def set_context(self, _ctx):
         pass
@@ -171,7 +172,11 @@ def test_get_update_delete():
     store = MockStore()
     schema = build_graphql_schema(store)
     asyncio.run(
-        run(schema, "mutation($i: JSON!) { createUser(input: $i) { _id } }", {"i": {"name": "b"}})
+        run(
+            schema,
+            "mutation($i: JSON!) { createUser(input: $i) { _id } }",
+            {"i": {"name": "b"}},
+        )
     )
 
     got = asyncio.run(run(schema, '{ getUser(id: "u1") { name } }'))
@@ -196,7 +201,11 @@ def test_skip_and_fragment():
     store = MockStore()
     schema = build_graphql_schema(store)
     asyncio.run(
-        run(schema, "mutation($i: JSON!) { createUser(input: $i) { _id } }", {"i": {"name": "c"}})
+        run(
+            schema,
+            "mutation($i: JSON!) { createUser(input: $i) { _id } }",
+            {"i": {"name": "c"}},
+        )
     )
     asyncio.run(
         run(
@@ -218,11 +227,17 @@ def test_limit_guard():
     assert last["gql"] == "User($limit:@l) { _id }"
     assert last["params"]["l"] == 50
 
-    asyncio.run(run(schema, "query($l: Int) { listUser(limit: $l) { _id } }", {"l": 1000}))
+    asyncio.run(
+        run(schema, "query($l: Int) { listUser(limit: $l) { _id } }", {"l": 1000})
+    )
     assert store.gql_log[-1]["params"]["l"] == 1000
 
     result = asyncio.run(
-        graphql(schema, "query($l: Int) { listUser(limit: $l) { _id } }", variable_values={"l": 1001})
+        graphql(
+            schema,
+            "query($l: Int) { listUser(limit: $l) { _id } }",
+            variable_values={"l": 1001},
+        )
     )
     assert result.errors and "ERR_LIMIT:" in result.errors[0].message
     assert result.data is None  # listUser 非空 ⇒ 错误冒泡至根,data 整体为 None
@@ -243,7 +258,6 @@ def test_annotations_hidden_readonly():
 def test_graphiql_page():
     # spec/05：GET /graphql 返回 GraphiQL 文档页
     from fastapi.testclient import TestClient
-
     from store_graphql import create_app
 
     client = TestClient(create_app(MockStore()))
@@ -260,7 +274,6 @@ class _PermissionError(Exception):
 def test_security_matrix():
     # spec/04 安全矩阵：403/401 分类、400 非 JSON、413 体限
     from fastapi.testclient import TestClient
-
     from store_graphql import create_app
 
     store = MockStore()
@@ -276,13 +289,18 @@ def test_security_matrix():
 
     client = TestClient(create_app(store, context_provider=provider))
     post = lambda u, body, **kw: client.post(  # noqa: E731
-        "/graphql", content=body, headers={"x-user": u, "Content-Type": "application/json"}, **kw
+        "/graphql",
+        content=body,
+        headers={"x-user": u, "Content-Type": "application/json"},
+        **kw,
     )
 
     assert post("bad", '{"query":"{ __typename }"}').status_code == 403
     assert post("broken", '{"query":"{ __typename }"}').status_code == 401
     assert post("alice", "not-json").status_code == 400
-    assert post("alice", '{"query":"' + "x" * ((1 << 20) + 10) + '"}').status_code == 413
+    assert (
+        post("alice", '{"query":"' + "x" * ((1 << 20) + 10) + '"}').status_code == 413
+    )
     ok = post("alice", '{"query":"{ __typename }"}')
     assert ok.status_code == 200
     assert ok.json()["data"]["__typename"] == "Query"
@@ -291,7 +309,6 @@ def test_security_matrix():
 def test_query_depth_guard():
     # spec/04:深度算法单元 + HTTP 层小阈值 400
     from graphql import parse
-
     from store_graphql.adapter import MAX_QUERY_DEPTH, query_depth
 
     deep = "{ " + "a { " * 10 + "x " + "}" * 10 + " }"
@@ -299,11 +316,16 @@ def test_query_depth_guard():
     assert query_depth(parse(deep)) == 11
     assert query_depth(parse("{ listUser { _id } }")) == 2
     # fragment 深度计入(非环)+ 环引用给有限值不崩
-    assert query_depth(parse("query { ...A } fragment A on Query { listUser { _id } }")) == 2
-    assert query_depth(parse("query { ...A } fragment A on Query { listUser { ...A } }")) == 1
+    assert (
+        query_depth(parse("query { ...A } fragment A on Query { listUser { _id } }"))
+        == 2
+    )
+    assert (
+        query_depth(parse("query { ...A } fragment A on Query { listUser { ...A } }"))
+        == 1
+    )
 
     from fastapi.testclient import TestClient
-
     from store_graphql import create_app
 
     client = TestClient(create_app(MockStore(), max_query_depth=2))
@@ -320,27 +342,38 @@ def test_query_depth_guard():
 def test_complexity_and_introspection_guard():
     # spec/04:字段计数单元 + max_query_fields 超限 + introspection 开关
     from graphql import parse
-
     from store_graphql.adapter import query_field_count
 
     assert query_field_count(parse("{ listUser { _id } }"))["fields"] == 2
-    assert query_field_count(parse("{ __schema { queryType { name } } }"))["introspection_used"] is True
+    assert (
+        query_field_count(parse("{ __schema { queryType { name } } }"))[
+            "introspection_used"
+        ]
+        is True
+    )
 
     from fastapi.testclient import TestClient
-
     from store_graphql import create_app
 
-    client = TestClient(create_app(MockStore(), max_query_fields=2, introspection=False))
+    client = TestClient(
+        create_app(MockStore(), max_query_fields=2, introspection=False)
+    )
     post = lambda q: client.post("/graphql", json={"query": q})  # noqa: E731
 
     assert post("{ listUser { _id } }").status_code == 200
     over = post("{ listUser { _id name } }")
-    assert over.status_code == 400 and "ERR_COMPLEXITY:" in over.json()["errors"][0]["message"]
+    assert (
+        over.status_code == 400
+        and "ERR_COMPLEXITY:" in over.json()["errors"][0]["message"]
+    )
     assert over.json()["errors"][0]["extensions"]["code"] == "ERR_COMPLEXITY"
     assert over.json()["errors"][0]["extensions"]["normalizedCode"] == "COMPLEXITY"
     assert post("{ __typename }").status_code == 200
     intro = post("{ __schema { queryType { name } } }")
-    assert intro.status_code == 400 and "ERR_INTROSPECTION:" in intro.json()["errors"][0]["message"]
+    assert (
+        intro.status_code == 400
+        and "ERR_INTROSPECTION:" in intro.json()["errors"][0]["message"]
+    )
     assert intro.json()["errors"][0]["extensions"]["code"] == "ERR_INTROSPECTION"
     assert intro.json()["errors"][0]["extensions"]["normalizedCode"] == "INTROSPECTION"
 
@@ -354,7 +387,9 @@ def test_override_and_extend():
     schema = build_graphql_schema(
         store,
         overrides={"Query.listUser": override_list},
-        extensions={"Query": {"ping": GraphQLField(GraphQLBoolean, resolve=lambda *_a: True)}},
+        extensions={
+            "Query": {"ping": GraphQLField(GraphQLBoolean, resolve=lambda *_a: True)}
+        },
     )
     data = asyncio.run(run(schema, "{ listUser { name } ping }"))
     assert data["listUser"][0]["name"] == "override"
@@ -372,7 +407,9 @@ def test_policy_provider_guard_and_require_context():
     try:
         from py_store import current_scope
     except ModuleNotFoundError:
-        pytest.skip("py_store(optional peer) 不可解析：CI 不安装宿主包，policy_provider 流程本地验证")
+        pytest.skip(
+            "py_store(optional peer) 不可解析：CI 不安装宿主包，policy_provider 流程本地验证"
+        )
 
     from types import SimpleNamespace
 
@@ -416,7 +453,9 @@ def test_policy_provider_guard_and_require_context():
 
     client = TestClient(create_app(store, policy_provider=policy))
     denied = client.post("/graphql", json={"query": "{ listUser { _id } }"})
-    assert seen == [None]  # policy_provider 入参 = 已解析 ctx（无 context_provider ⇒ None）
+    assert seen == [
+        None
+    ]  # policy_provider 入参 = 已解析 ctx（无 context_provider ⇒ None）
     assert denied.json()["data"] is None
     assert denied.json()["errors"][0]["message"].startswith("ERR_NO_CONTEXT")
 
@@ -432,7 +471,9 @@ def test_policy_provider_profile_view_and_ctx_reuse():
     try:
         from py_store import current_scope
     except ModuleNotFoundError:
-        pytest.skip("py_store(optional peer) 不可解析：CI 不安装宿主包，policy_provider 流程本地验证")
+        pytest.skip(
+            "py_store(optional peer) 不可解析：CI 不安装宿主包，policy_provider 流程本地验证"
+        )
 
     from types import SimpleNamespace
 

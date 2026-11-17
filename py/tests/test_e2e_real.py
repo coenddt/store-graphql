@@ -12,7 +12,6 @@ CRUD 全链路真实落库(含归档编排)。依赖缺失 ⇒ pytest.skip 显�
 import asyncio
 
 import pytest
-
 from store_graphql import build_graphql_schema
 
 pytest.importorskip("py_store", reason="py-store 未安装(pip install -e py-store)")
@@ -47,13 +46,16 @@ async def _run_case():
         schema = build_graphql_schema(py_store.store)
 
         async def run(query, variable_values=None):
-            from graphql import parse, execute as gql_execute
+            from graphql import execute as gql_execute
+            from graphql import parse
 
             result = await gql_execute(
                 schema, parse(query), variable_values=variable_values or {}
             )
             if result.errors:
-                raise AssertionError(f"GraphQL 执行失败: {[e.message for e in result.errors]}")
+                raise AssertionError(
+                    f"GraphQL 执行失败: {[e.message for e in result.errors]}"
+                )
             return result.data
 
         # create:真实 core 生成 _id + timestamps,真实落库
@@ -114,7 +116,9 @@ async def _run_case():
             "query($c: JSON) { listUser(condition: $c) { _id } }",
             {"c": {"deletedAt": 5}},
         )
-        assert [x["_id"] for x in cond5["listUser"]] == [five["createUser"]["_id"]], cond5
+        assert [x["_id"] for x in cond5["listUser"]] == [five["createUser"]["_id"]], (
+            cond5
+        )
 
 
 def test_e2e_real_sqlite():

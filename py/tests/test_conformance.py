@@ -8,14 +8,17 @@ import asyncio
 import json
 from pathlib import Path
 
-from graphql import execute as gql_execute, parse
-
+from graphql import execute as gql_execute
+from graphql import parse
 from store_graphql import build_graphql_schema
 
 CASE = json.loads(
-    (Path(__file__).resolve().parents[2] / "conformance" / "cases" / "users-graphql.json").read_text(
-        encoding="utf-8"
-    )
+    (
+        Path(__file__).resolve().parents[2]
+        / "conformance"
+        / "cases"
+        / "users-graphql.json"
+    ).read_text(encoding="utf-8")
 )
 
 
@@ -34,7 +37,11 @@ class CaseStore:
     async def query(self, gql, params=None):
         self.gql_log.append({"gql": gql, "params": params})
         cond = (params or {}).get("c0")
-        return [r for r in self.rows if not cond or all(r.get(k) == v for k, v in cond.items())]
+        return [
+            r
+            for r in self.rows
+            if not cond or all(r.get(k) == v for k, v in cond.items())
+        ]
 
     async def insert(self, _name, data):
         doc = {"_id": "u1", **data}
@@ -47,7 +54,9 @@ class CaseStore:
         return row
 
     async def remove(self, _name, cond):
-        self.rows = [r for r in self.rows if not all(r.get(k) == v for k, v in cond.items())]
+        self.rows = [
+            r for r in self.rows if not all(r.get(k) == v for k, v in cond.items())
+        ]
 
     def set_context(self, _ctx):
         pass
@@ -79,7 +88,9 @@ def test_conformance():
             for key in expect.get("dataKeys") or []:
                 assert key in data, f"step#{i} data 缺少 {key}"
             if "gql" in expect:
-                assert store.gql_log[-1]["gql"] == expect["gql"], f"step#{i} 投影下推串不符"
+                assert store.gql_log[-1]["gql"] == expect["gql"], (
+                    f"step#{i} 投影下推串不符"
+                )
             if "paramsLimit" in expect:
                 assert store.gql_log[-1]["params"]["l"] == expect["paramsLimit"], (
                     f"step#{i} params.l 不符"

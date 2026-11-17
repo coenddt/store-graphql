@@ -5,7 +5,6 @@
 """
 
 from fastapi.testclient import TestClient
-
 from store_graphql import create_app
 
 

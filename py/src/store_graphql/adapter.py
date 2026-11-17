@@ -5,8 +5,6 @@ import inspect
 import json
 
 from graphql import (
-    graphql,
-    parse,
     GraphQLArgument,
     GraphQLBoolean,
     GraphQLField,
@@ -19,6 +17,8 @@ from graphql import (
     GraphQLScalarType,
     GraphQLSchema,
     GraphQLString,
+    graphql,
+    parse,
     print_schema,
 )
 
@@ -47,13 +47,12 @@ MAX_QUERY_FIELDS = 300
 def query_field_count(document):
     """字段计数 + introspection 使用检测(fragment 展开计入,防环;__typename 放行)。"""
     fragments = {
-        d.name.value: d
-        for d in document.definitions
-        if d.kind == "fragment_definition"
+        d.name.value: d for d in document.definitions if d.kind == "fragment_definition"
     }
     out = {"fields": 0, "introspection_used": False}
 
     def walk_sel_set(sel_set, visiting):
+        """递归累加 out["fields"] 并检测 introspection；fragment 展开计入，visiting 防环。"""
         if sel_set is None:
             return
         for sel in sel_set.selections:
@@ -79,13 +78,13 @@ def query_field_count(document):
 
 
 def query_depth(document):
+    """spec/04 深度守卫：计算各 operation 起的最大字段嵌套层数（FragmentSpread 按定义递归，visiting 防环）。"""
     fragments = {
-        d.name.value: d
-        for d in document.definitions
-        if d.kind == "fragment_definition"
+        d.name.value: d for d in document.definitions if d.kind == "fragment_definition"
     }
 
     def depth_of_sel_set(sel_set, visiting):
+        """返回该 selection set 的最大嵌套深度；空集为 0，fragment 展开递归计入。"""
         if sel_set is None:
             return 0
         max_d = 0
@@ -116,6 +115,7 @@ def query_depth(document):
             if od > max_d:
                 max_d = od
     return max_d
+
 
 # spec/05：GraphiQL 文档页（CDN 版，GET /graphql 返回；POST 才执行查询）
 GRAPHIQL_HTML = """<!doctype html>
@@ -150,6 +150,7 @@ GRAPHIQL_HTML = """<!doctype html>
 
 
 def filter_archived(names):
+    """spec/01 归档表过滤：剔除后缀 Deleted 且存在同名存续表的归档名（与 store-api 三端逐字一致）。"""
     s = set(names)
     return [
         n
@@ -166,6 +167,7 @@ def filter_archived(names):
 
 
 def filter_reserved(names):
+    """过滤 `__` 前缀的 GraphQL 保留名（introspection 约束），无条件生效、不受 include_archived 影响。"""
     return [n for n in names if not n.startswith("__")]
 
 
@@ -186,6 +188,7 @@ GraphQLJSON = GraphQLScalarType(
 
 
 def _scalar_for(type_name):
+    """defn 标量类型名 → GraphQL 标量类型；未登记的类型返回 None。"""
     return {
         "string": GraphQLString,
         "datetime": GraphQLString,
@@ -196,19 +199,25 @@ def _scalar_for(type_name):
 
 
 def _out_type(field_defn, type_name):
+    """字段定义 → 输出类型：object 嵌套递归成 GraphQLObjectType，否则映射标量、兜底 JSON。"""
     if field_defn.get("type") == "object" and "fields" in field_defn:
         return GraphQLObjectType(
             name=type_name,
-            description=field_defn.get("description"),  # spec/05：description 透传不改写
+            description=field_defn.get(
+                "description"
+            ),  # spec/05：description 透传不改写
             fields=lambda: _map_fields(field_defn["fields"], type_name),
         )
     return _scalar_for(field_defn.get("type")) or GraphQLJSON
 
 
 def _map_fields(fields, type_name):
+    """字段字典 → GraphQLField 映射：_id 强制非空 ID，description 透传（spec/05，含 computes 与嵌套字段）。"""
     return {
         k: GraphQLField(
-            GraphQLNonNull(GraphQLID) if k == "_id" else _out_type(v, f"{type_name}_{k}"),
+            GraphQLNonNull(GraphQLID)
+            if k == "_id"
+            else _out_type(v, f"{type_name}_{k}"),
             description=v.get("description"),  # spec/05：含 computes 与嵌套字段
         )
         for k, v in (fields or {}).items()
@@ -216,10 +225,14 @@ def _map_fields(fields, type_name):
 
 
 def _model_fields(defn):
+    """合并 fields 与 computes（computes 视同字段，spec/01）并恒注入可空的 _score 向量检索派生列（spec/04）。"""
     merged = dict(defn.get("fields") or {})
     merged.update(defn.get("computes") or {})  # spec/01：computes 视同字段
     # `_score`：向量检索派生列（04），恒注入且可空
-    merged["_score"] = {"type": "float", "description": "向量检索相似度得分（越大越相似）"}
+    merged["_score"] = {
+        "type": "float",
+        "description": "向量检索相似度得分（越大越相似）",
+    }
     return merged
 
 
@@ -227,6 +240,7 @@ def _model_fields(defn):
 
 
 def _should_include(node, variables):
+    """按 @skip/@include 指令（if 支持变量与布尔字面量）判定 selection 是否纳入投影；无指令默认纳入。"""
     for d in node.directives or ():
         if d.name.value not in ("skip", "include"):
             continue
@@ -249,14 +263,18 @@ def _should_include(node, variables):
 
 
 def projection_from_info(info):
+    """把 GraphQL selection 展开成 GQL 投影串下推给 store（alias 忽略，spec/02 v0）；全空兜底 `_id`。"""
     root = next((n for n in info.field_nodes if n.kind == K_FIELD), None)
     if root is None or root.selection_set is None:
         return "_id"
     variables = info.variable_values
-    if not isinstance(variables, dict):  # graphql-core 3.3 的 VariableValues 对象,强制值在 .coerced
+    if not isinstance(
+        variables, dict
+    ):  # graphql-core 3.3 的 VariableValues 对象,强制值在 .coerced
         variables = getattr(variables, "coerced", None) or {}
 
     def walk(sel):
+        """单个 selection → 投影片段；字段按 skip/include 过滤并递归展开，fragment/spread 展开其 selections。"""
         if sel.kind == K_FIELD:
             if not _should_include(sel, variables):
                 return None
@@ -281,14 +299,20 @@ def projection_from_info(info):
             )
         return None
 
-    return ", ".join(filter(None, (walk(s) for s in root.selection_set.selections))) or "_id"
+    return (
+        ", ".join(filter(None, (walk(s) for s in root.selection_set.selections)))
+        or "_id"
+    )
 
 
 # ── spec/02：根 resolver（投影下推，无 N+1）──
 
 
 def _make_get(store, name, id_field):
+    """生成 get{name} resolver 工厂：按 id 条件下推投影查询单条（spec/02，无 N+1）。"""
+
     async def resolve(_src, info, *, id):
+        """以 selection 投影按 id 查询，返回首行（无则 None）。"""
         projection = projection_from_info(info)
         rows = await store.query(
             f"{name}($condition:@c0) {{ {projection} }}", {"c0": {id_field: id}}
@@ -321,7 +345,9 @@ def _vector_limit_guard(condition, explicit_limit):
     if near is None:
         return False
     if explicit_limit is not None:
-        raise ValueError("ERR_LIMIT:list limit 与 $near.$limit 互斥，请只传 $near.$limit")
+        raise ValueError(
+            "ERR_LIMIT:list limit 与 $near.$limit 互斥，请只传 $near.$limit"
+        )
     if isinstance(near, dict):
         n = near.get("$limit")
         if isinstance(n, int) and n > LIST_LIMIT_MAX:
@@ -330,7 +356,10 @@ def _vector_limit_guard(condition, explicit_limit):
 
 
 def _make_list(store, name):
+    """生成 list{name} resolver 工厂：condition/sort/limit 参数化下推，含 limit 守卫与 $near 互斥处理（spec/02）。"""
+
     async def resolve(_src, info, *, condition=None, sort=None, limit=None):
+        """组装 `$condition/@c0`、`$sort/@s1`、`$limit/@l` 下推查询；limit 缺省 50、超上限抛 ERR_LIMIT。"""
         has_near = _vector_limit_guard(condition, limit)
         # spec/02 limit 守卫:缺省 50 防全表;超上限抛错(ERR_LIMIT: 稳定前缀),不静默截断
         if limit is None:
@@ -356,14 +385,20 @@ def _make_list(store, name):
 
 
 def _make_create(store, name):
+    """生成 create{name} resolver 工厂：input 直接透传 store.insert。"""
+
     async def resolve(_src, _info, *, input):
+        """将 input 文档透传 store.insert 并返回插入结果。"""
         return await store.insert(name, input)
 
     return resolve
 
 
 def _make_update(store, name, id_field):
+    """生成 update{name} resolver 工厂：按 id_field 定位更新 set 后回查返回最新文档。"""
+
     async def resolve(_src, info, *, id, set):
+        """先按 id 更新 set，再以 selection 投影回查返回该行。"""
         await store.update(name, {id_field: id}, set)
         projection = projection_from_info(info)
         rows = await store.query(
@@ -375,7 +410,10 @@ def _make_update(store, name, id_field):
 
 
 def _make_delete(store, name, id_field):
+    """生成 delete{name} resolver 工厂：按 id_field 定位删除并恒返回 True。"""
+
     async def resolve(_src, _info, *, id):
+        """按 id 调 store.remove 删除文档，恒返回 True。"""
         await store.remove(name, {id_field: id})
         return True
 
@@ -394,18 +432,22 @@ def build_graphql_schema(
     id_field="_id",
     include_archived=False,
 ):
+    """把 store schema 构建成 GraphQLSchema：每模型生成 get/list/create/update/delete 五件套，含 override/extensions 钩子与归档、`__` 保留名过滤（spec/01、03）。"""
     overrides = dict(overrides or {})
     extensions = dict(extensions or {})
     # spec/01：默认过滤归档表；include_archived=True 为显式开关（点名要看归档的人能拿到）。
     # `__` 保留名过滤不受该开关影响。
     raw_names = resources if resources is not None else store.list()
-    names = filter_reserved(raw_names if include_archived else filter_archived(raw_names))
+    names = filter_reserved(
+        raw_names if include_archived else filter_archived(raw_names)
+    )
 
     query_fields = {}
     mutation_fields = {}
     used_override_keys = set()
 
     def resolve_with_override(key, fallback):
+        """override 命中则记入 used_override_keys 并返回之，否则返回默认 resolver。"""
         fn = overrides.get(key)
         if fn is not None:
             used_override_keys.add(key)
@@ -426,7 +468,9 @@ def build_graphql_schema(
         query_fields[f"get{name}"] = GraphQLField(
             model_type,
             args={"id": GraphQLArgument(GraphQLNonNull(GraphQLID))},
-            resolve=resolve_with_override(f"Query.get{name}", _make_get(store, name, id_field)),
+            resolve=resolve_with_override(
+                f"Query.get{name}", _make_get(store, name, id_field)
+            ),
         )
         query_fields[f"list{name}"] = GraphQLField(
             GraphQLNonNull(GraphQLList(GraphQLNonNull(model_type))),
@@ -470,7 +514,9 @@ def build_graphql_schema(
         elif key == "Mutation":
             mutation_fields.update(fields)
         else:
-            raise ValueError(f'extensions 仅支持 Query/Mutation，收到 "{key}"（spec/03）')
+            raise ValueError(
+                f'extensions 仅支持 Query/Mutation，收到 "{key}"（spec/03）'
+            )
 
     # spec/03：override 键构建期校验，未知路径报错不静默
     for key in overrides:
@@ -498,13 +544,13 @@ def _stable_error_code(message):
     message 原样保留（含前缀）；权限类（ERR_PERMISSION:）不在此改写（code 只增不改）。
     未知/无冒号前缀 ⇒ None（保持原样，不吞成通用错误）。
     """
-    if not isinstance(message, str) or not message.startswith('ERR_'):
+    if not isinstance(message, str) or not message.startswith("ERR_"):
         return None
-    head, sep, _ = message.partition(':')
+    head, sep, _ = message.partition(":")
     if not sep:
         return None
-    code = head[len('ERR_'):]
-    if code == 'PERMISSION' or not code.isupper():
+    code = head[len("ERR_") :]
+    if code == "PERMISSION" or not code.isupper():
         return None
     return code
 
@@ -561,6 +607,7 @@ def create_app(
     max_query_fields=None,
     introspection=True,
 ):
+    """FastAPI 应用工厂（spec/04）：POST 路由执行查询（1MB / 深度 / 复杂度 / introspection 守卫），GET 返回 GraphiQL 文档页。"""
     # fail-secure 装配守卫：宿主开启上下文强制却未配 context_provider 时，装配期即
     # 拒绝（fail-fast）；否则每请求在运行期以 ERR_NO_CONTEXT 失败（no-error-masking）。
     require_context = getattr(store, "require_context", None)
@@ -582,7 +629,7 @@ def create_app(
                 "（py-store 提供）；皮侧禁自持 Registry 派生视图（R2-04 §7）"
             )
         try:
-            from py_store import with_scope as _with_scope  # noqa: F841 — 供请求期使用
+            from py_store import with_scope as _with_scope
         except Exception as e:
             raise RuntimeError(
                 f"ERR_DEPENDENCY_MISSING: 注入 policy_provider 需要安装 py-store（with_scope）: {e}"
@@ -591,7 +638,7 @@ def create_app(
     try:
         from fastapi import FastAPI, Request
         from fastapi.responses import HTMLResponse, JSONResponse
-    except ImportError as e:  # noqa: F841 — 报错信息自身已含原因
+    except ImportError as e:
         raise ImportError(
             "create_app 需要安装 fastapi：pip install 'store-graphql-py[fastapi]'；"
             "或仅用 build_graphql_schema 自行承载"
@@ -611,11 +658,13 @@ def create_app(
 
     @app.get(path)
     async def graphiql_page():
+        """GET 路由：返回 CDN 版 GraphiQL 文档页（执行走 POST，spec/05）。"""
         # spec/05：GET 返回 GraphiQL 文档页（执行走 POST；GET 查询执行列 v1）
         return HTMLResponse(GRAPHIQL_HTML)
 
     @app.post(path)
     async def graphql_endpoint(request: Request):
+        """POST 路由：1MB/JSON 校验 → context/policy 解析（403/401 分类）→ 深度/复杂度/introspection 守卫 → 执行并组装错误 payload。"""
         raw = await request.body()
         # spec/04：请求体上限 1MB（对齐 store-api 三端，防大 body 撑内存）
         if len(raw) > (1 << 20):
@@ -627,7 +676,7 @@ def create_app(
             body = json.loads(raw) if raw else {}
             if not isinstance(body, dict):
                 raise ValueError("body 不是 JSON 对象")
-        except Exception:  # noqa: BLE001 — 非 JSON 请求体按 400 明确反馈，不静默
+        except Exception:
             return JSONResponse(
                 status_code=400, content={"errors": [{"message": "请求体必须是 JSON"}]}
             )
@@ -637,9 +686,10 @@ def create_app(
                 ctx = context_provider(request)
                 if inspect.isawaitable(ctx):
                     ctx = await ctx
-            except Exception as e:  # noqa: BLE001 — spec/04：权限类（含同档 NoContext）⇒ 403；其余 ⇒ 401
-                is_perm = (permission_error is not None and isinstance(e, permission_error)) \
-                    or getattr(e, "code", None) == "no_context"
+            except Exception as e:
+                is_perm = (
+                    permission_error is not None and isinstance(e, permission_error)
+                ) or getattr(e, "code", None) == "no_context"
                 status = 403 if is_perm else 401
                 return JSONResponse(
                     status_code=status,
@@ -654,10 +704,15 @@ def create_app(
         if policy_provider is not None:
             try:
                 overrides = policy_provider(ctx)
-                view = store.base_view().with_policy(overrides) if overrides is not None else None
-            except Exception as e:  # noqa: BLE001 — spec/04：权限类（含同档 NoContext）⇒ 403；其余 ⇒ 401
-                is_perm = (permission_error is not None and isinstance(e, permission_error)) \
-                    or getattr(e, "code", None) == "no_context"
+                view = (
+                    store.base_view().with_policy(overrides)
+                    if overrides is not None
+                    else None
+                )
+            except Exception as e:
+                is_perm = (
+                    permission_error is not None and isinstance(e, permission_error)
+                ) or getattr(e, "code", None) == "no_context"
                 status = 403 if is_perm else 401
                 return JSONResponse(
                     status_code=status,
@@ -666,11 +721,13 @@ def create_app(
         # spec/04 深度/复杂度/introspection 守卫:执行前独立 parse 检查
         # (语法错不在此拦,维持执行器原路径;双 parse 成本微秒级,如实标注 spec/04)
         depth_limit = MAX_QUERY_DEPTH if max_query_depth is None else max_query_depth
-        fields_limit = MAX_QUERY_FIELDS if max_query_fields is None else max_query_fields
+        fields_limit = (
+            MAX_QUERY_FIELDS if max_query_fields is None else max_query_fields
+        )
         query_str = body.get("query") or ""
         try:
             doc = parse(query_str)
-        except Exception:  # noqa: BLE001 — 语法解析失败交给执行器原路径报错
+        except Exception:
             doc = None
         if doc is not None:
             depth = query_depth(doc)
@@ -681,7 +738,10 @@ def create_app(
                         "errors": [
                             {
                                 "message": f"ERR_DEPTH:查询深度 {depth} 超过上限 {depth_limit}",
-                                "extensions": {"code": "ERR_DEPTH", "normalizedCode": "DEPTH"},
+                                "extensions": {
+                                    "code": "ERR_DEPTH",
+                                    "normalizedCode": "DEPTH",
+                                },
                             }
                         ]
                     },
@@ -694,7 +754,10 @@ def create_app(
                         "errors": [
                             {
                                 "message": "ERR_INTROSPECTION:introspection 已禁用",
-                                "extensions": {"code": "ERR_INTROSPECTION", "normalizedCode": "INTROSPECTION"},
+                                "extensions": {
+                                    "code": "ERR_INTROSPECTION",
+                                    "normalizedCode": "INTROSPECTION",
+                                },
                             }
                         ]
                     },
@@ -706,7 +769,10 @@ def create_app(
                         "errors": [
                             {
                                 "message": f"ERR_COMPLEXITY:查询字段数 {usage['fields']} 超过上限 {fields_limit}",
-                                "extensions": {"code": "ERR_COMPLEXITY", "normalizedCode": "COMPLEXITY"},
+                                "extensions": {
+                                    "code": "ERR_COMPLEXITY",
+                                    "normalizedCode": "COMPLEXITY",
+                                },
                             }
                         ]
                     },
@@ -714,7 +780,9 @@ def create_app(
         # R2-04：resolver 执行段包进视图作用域（深度/复杂度守卫与 payload 组装不触
         # resolver，无需进作用域；未注入 policy_provider ⇒ nullcontext 零行为变化）
         exec_scope = (
-            _with_scope(view) if policy_provider is not None else contextlib.nullcontext()
+            _with_scope(view)
+            if policy_provider is not None
+            else contextlib.nullcontext()
         )
         with exec_scope:
             result = await graphql(
@@ -728,7 +796,9 @@ def create_app(
             # spec/04：执行期权限类（含同档 NoContext）保持 GraphQL over HTTP 的 200，
             # 靠 extensions.code = FORBIDDEN 区分（不按状态码分叉）；其余错误仅补 extensions.code。
             payload["errors"] = [
-                _forbidden_payload(e) if _is_permission_class(e, permission_error) else _error_payload(e)
+                _forbidden_payload(e)
+                if _is_permission_class(e, permission_error)
+                else _error_payload(e)
                 for e in result.errors
             ]
             return JSONResponse(payload)
