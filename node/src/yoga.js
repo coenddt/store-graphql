@@ -11,7 +11,7 @@ const { GraphQLError } = require('graphql');
 
 const { MAX_QUERY_DEPTH, MAX_QUERY_FIELDS, queryDepthOf, queryFieldCount } = require('./guards');
 const { buildGraphQLSchema } = require('./schema');
-const { isPermissionClass, defaultMaskError, classifiedErrorResponse } = require('./error-mask');
+const { defaultMaskError, classifiedErrorResponse } = require('./error-mask');
 
 /**
  * fail-secure 装配守卫：宿主开启上下文强制却未配 contextFactory 时，装配期即拒绝
