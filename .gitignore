@@ -9,3 +9,7 @@ build/
 *.so
 tmp/
 .env
+
+# 本地工具 / 覆盖率产物（不进仓）
+.coverage
+.video_agent/
