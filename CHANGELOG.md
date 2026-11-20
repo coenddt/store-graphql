@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.1 (2026-11-20, Go module only)
+
+### Fixed
+
+- **Go module path 修正为子目录标准形式**：`github.com/coenddt/store-graphql-go` → `github.com/coenddt/store-graphql/go`。
+  原路径指向不存在的 GitHub 仓库，Go proxy 返回 404（`not found: module ...`），`go/v*` tag 实际不可消费；
+  npm / PyPI 无新版本（仍为 1.1.0），仅 Go 端以 `go/v1.1.1` 发布。
+
 ## 1.1.0 (2026-11-20)
 
 > 向后兼容扩展：只新增根字段与类型，`listX` 的入参、返回结构与错误契约一律不变。

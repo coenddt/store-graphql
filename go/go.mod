@@ -1,4 +1,4 @@
-module github.com/coenddt/store-graphql-go
+module github.com/coenddt/store-graphql/go
 
 go 1.26.0
 

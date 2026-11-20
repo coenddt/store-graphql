@@ -7,7 +7,7 @@ name: release
 #   - npm:NPM_TOKEN secret(仓库 Settings → Secrets → Actions;只此一处,禁入仓库/文档)
 #   - PyPI:PYPI_API_TOKEN secret(user=__token__)——用户裁决(2026-10-04)皮肤层包走 API token 路线,
 #     以免去 pypi.org 网页 Trusted Publisher 配置(与 store-gateway/store-grpc/store-mcp 同路线,已留痕)。
-# go 端(module store-graphql-go)发布 = 打 `go/v*` tag 推送,Go proxy 自动拉取,无需本 workflow。
+# go 端(module github.com/coenddt/store-graphql/go)发布 = 打 `go/v*` tag 推送,Go proxy 自动拉取,无需本 workflow。
 
 on:
   push:
