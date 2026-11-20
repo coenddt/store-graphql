@@ -146,6 +146,46 @@ func (m *mockStore) Query(_ context.Context, gql string, params map[string]any, 
 	return out, nil
 }
 
+// QueryWithCount 模拟宿主 queryWithCount 信封（spec/01 pageX conformance 用）。
+func (m *mockStore) QueryWithCount(_ context.Context, gql string, params map[string]any, _ *gostore.Context) (map[string]any, error) {
+	m.gqlLog = append(m.gqlLog, gql)
+	m.lastParams = params
+	var cond map[string]any
+	if params != nil {
+		cond, _ = params["c0"].(map[string]any)
+	}
+	matched := []map[string]any{}
+	for _, r := range m.rows {
+		if cond == nil || condMatch(r, cond) {
+			matched = append(matched, r)
+		}
+	}
+	page, pageSize := 0, 50
+	if params != nil {
+		if v, ok := asInt(params["page"]); ok {
+			page = v
+		}
+		if v, ok := asInt(params["pageSize"]); ok {
+			pageSize = v
+		}
+	}
+	start := page * pageSize
+	if start > len(matched) {
+		start = len(matched)
+	}
+	end := start + pageSize
+	if end > len(matched) {
+		end = len(matched)
+	}
+	return map[string]any{
+		"items":    matched[start:end],
+		"total":    len(matched),
+		"hasMore":  (page+1)*pageSize < len(matched),
+		"page":     page,
+		"pageSize": pageSize,
+	}, nil
+}
+
 func (m *mockStore) Insert(_ context.Context, _ string, data map[string]any, _ *gostore.Context) (map[string]any, error) {
 	doc := map[string]any{"_id": "u1"}
 	for k, v := range data {

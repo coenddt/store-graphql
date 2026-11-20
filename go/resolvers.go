@@ -65,15 +65,17 @@ func truthy(v any) bool {
 	return b
 }
 
-// projectionFrom 把 ResolveParams 的 selection 序列化为 GQL 投影串。
-// 含 FragmentSpread 时经 info.Fragments 展开展开失败则回退 allFields（spec/02 go 端差异）。
-func projectionFrom(p graphql.ResolveParams, allFields []string) string {
+// projectionOfSet 把 selection set 序列化为 GQL 投影串（fragments 展开 + @skip/@include 求值）。
+func projectionOfSet(p graphql.ResolveParams, set *ast.SelectionSet) string {
+	if set == nil {
+		return ""
+	}
 	var walk func(sel ast.Selection) string
 	// joinSet 遍历子选择集并 join（Field/InlineFragment/FragmentSpread 三分支共用形态）。
-	joinSet := func(set *ast.SelectionSet) string {
+	joinSet := func(sub *ast.SelectionSet) string {
 		parts := []string{}
-		for _, sub := range set.Selections {
-			if w := walk(sub); w != "" {
+		for _, sel := range sub.Selections {
+			if w := walk(sel); w != "" {
 				parts = append(parts, w)
 			}
 		}
@@ -87,14 +89,8 @@ func projectionFrom(p graphql.ResolveParams, allFields []string) string {
 			}
 			head := s.Name.Value
 			if s.SelectionSet != nil {
-				parts := make([]string, 0, len(s.SelectionSet.Selections))
-				for _, sub := range s.SelectionSet.Selections {
-					if w := walk(sub); w != "" {
-						parts = append(parts, w)
-					}
-				}
-				if len(parts) > 0 {
-					return head + " { " + strings.Join(parts, ", ") + " }"
+				if inner := joinSet(s.SelectionSet); inner != "" {
+					return head + " { " + inner + " }"
 				}
 			}
 			return head
@@ -113,21 +109,73 @@ func projectionFrom(p graphql.ResolveParams, allFields []string) string {
 		}
 		return ""
 	}
+	return joinSet(set)
+}
 
+// projectionFrom 把 ResolveParams 根字段的 selection 序列化为 GQL 投影串。
+// 含 FragmentSpread 时经 info.Fragments 展开展开失败则回退 allFields（spec/02 go 端差异）。
+func projectionFrom(p graphql.ResolveParams, allFields []string) string {
 	root := p.Info.FieldASTs
 	if len(root) == 0 || root[0].SelectionSet == nil {
 		return fallbackProjection(allFields)
 	}
-	parts := []string{}
-	for _, sel := range root[0].SelectionSet.Selections {
-		if w := walk(sel); w != "" {
-			parts = append(parts, w)
-		}
-	}
-	if len(parts) == 0 {
+	out := projectionOfSet(p, root[0].SelectionSet)
+	if out == "" {
 		return fallbackProjection(allFields)
 	}
-	return strings.Join(parts, ", ")
+	return out
+}
+
+// findFieldInSet 在 selection set 中按字段名查找（fragment 展开，seen 防环）。
+func findFieldInSet(p graphql.ResolveParams, set *ast.SelectionSet, name string, seen map[string]bool) *ast.Field {
+	if set == nil {
+		return nil
+	}
+	for _, sel := range set.Selections {
+		switch s := sel.(type) {
+		case *ast.Field:
+			if s.Name.Value == name {
+				return s
+			}
+		case *ast.InlineFragment:
+			if hit := findFieldInSet(p, s.SelectionSet, name, seen); hit != nil {
+				return hit
+			}
+		case *ast.FragmentSpread:
+			if p.Info.Fragments == nil || seen[s.Name.Value] {
+				continue
+			}
+			def, ok := p.Info.Fragments[s.Name.Value]
+			if !ok || def.GetSelectionSet() == nil {
+				continue
+			}
+			next := map[string]bool{s.Name.Value: true}
+			for k := range seen {
+				next[k] = true
+			}
+			if hit := findFieldInSet(p, def.GetSelectionSet(), name, next); hit != nil {
+				return hit
+			}
+		}
+	}
+	return nil
+}
+
+// projectionForField 取根字段下指定子字段的 selection 投影（pageX 的 items 用）。
+func projectionForField(p graphql.ResolveParams, fieldName string, allFields []string) string {
+	root := p.Info.FieldASTs
+	if len(root) == 0 || root[0].SelectionSet == nil {
+		return fallbackProjection(allFields)
+	}
+	child := findFieldInSet(p, root[0].SelectionSet, fieldName, map[string]bool{})
+	if child == nil || child.SelectionSet == nil {
+		return fallbackProjection(allFields)
+	}
+	out := projectionOfSet(p, child.SelectionSet)
+	if out == "" {
+		return fallbackProjection(allFields)
+	}
+	return out
 }
 
 func fallbackProjection(allFields []string) string {
@@ -173,6 +221,20 @@ const (
 	listLimitDefault = 50
 	listLimitMax     = 1000
 )
+
+// spec/01 pageX 分页常量：pageSize 上限对齐宿主 MAX_PAGE_SIZE；深翻页守 offset 上界。
+// 调整先改 spec 再三端同步。
+const (
+	pageSizeDefault = 50
+	pageSizeMax     = 5000
+	pageMaxOffset   = 100000
+)
+
+// countStore 是宿主可选能力端口（spec/00）：*gostore.Store 已实现 QueryWithCount。
+// 以可选接口断言接入，避免给 Store 接口加方法而破坏第三方实现。
+type countStore interface {
+	QueryWithCount(ctx context.Context, gql string, params map[string]any, actx *gostore.Context) (map[string]any, error)
+}
 
 // findByKey 深度优先找第一个同名键（`$near` 只允许出现一次，由 core 保证）。
 func findByKey(node any, key string) any {
@@ -274,6 +336,79 @@ func makeList(st Store, name string, allFields []string) graphql.FieldResolveFn 
 		}
 		head := name + "(" + strings.Join(parts, ",") + ")"
 		return st.Query(p.Context, fmt.Sprintf("%s { %s }", head, proj), params, actxFrom(p.Context))
+	}
+}
+
+// pageBounds 解析并校验分页参数（spec/01）：缺省 page=0 / pageSize=50，越界一律报错。
+func pageBounds(pageArg, pageSizeArg any) (int, int, error) {
+	page, pageSize := 0, pageSizeDefault
+	if pageArg != nil {
+		n, ok := asInt(pageArg)
+		if !ok || n < 0 {
+			return 0, 0, fmt.Errorf("ERR_LIMIT:page 必须是非负整数,收到 %v", pageArg)
+		}
+		page = n
+	}
+	if pageSizeArg != nil {
+		n, ok := asInt(pageSizeArg)
+		if !ok || n <= 0 {
+			return 0, 0, fmt.Errorf("ERR_LIMIT:pageSize 必须是正整数,收到 %v", pageSizeArg)
+		}
+		pageSize = n
+	}
+	if pageSize > pageSizeMax {
+		return 0, 0, fmt.Errorf("ERR_LIMIT:pageSize 上限 %d,收到 %d", pageSizeMax, pageSize)
+	}
+	if page*pageSize > pageMaxOffset {
+		return 0, 0, fmt.Errorf("ERR_LIMIT:page*pageSize 上限 %d,收到 %d", pageMaxOffset, page*pageSize)
+	}
+	return page, pageSize, nil
+}
+
+// makePage 生成 page{name} resolver：走宿主 QueryWithCount，投影只下推 items 子选择（spec/01）。
+func makePage(st Store, name string, allFields []string) graphql.FieldResolveFn {
+	return func(p graphql.ResolveParams) (interface{}, error) {
+		cs, ok := st.(countStore)
+		if !ok {
+			return nil, fmt.Errorf("ERR_CAPABILITY:宿主 store 未提供 QueryWithCount，pageX 不可用（spec/00）")
+		}
+		if findByKey(p.Args["condition"], "$near") != nil {
+			return nil, fmt.Errorf("ERR_LIMIT:pageX 与 $near 向量检索互斥（向量检索无 offset 语义）")
+		}
+		page, pageSize, err := pageBounds(p.Args["page"], p.Args["pageSize"])
+		if err != nil {
+			return nil, err
+		}
+		proj := projectionForField(p, "items", allFields)
+		parts, params := []string{}, map[string]any{"page": page, "pageSize": pageSize}
+		if v, ok := p.Args["condition"]; ok && v != nil {
+			parts = append(parts, "$condition:@c0")
+			params["c0"] = v
+		}
+		if v, ok := p.Args["sort"]; ok && v != nil {
+			parts = append(parts, "$sort:@s1")
+			params["s1"] = v
+		}
+		head := name
+		if len(parts) > 0 { // 无 condition/sort 时不产出空括号 `X()`
+			head = name + "(" + strings.Join(parts, ",") + ")"
+		}
+		out, err := cs.QueryWithCount(p.Context, fmt.Sprintf("%s { %s }", head, proj), params, actxFrom(p.Context))
+		if err != nil {
+			return nil, err
+		}
+		// 宿主信封原样透出（整数统一为 int，避免驱动差异导致的 Int 序列化边界）
+		total, _ := asInt(out["total"])
+		resPage, _ := asInt(out["page"])
+		resPageSize, _ := asInt(out["pageSize"])
+		hasMore, _ := out["hasMore"].(bool)
+		return map[string]any{
+			"items":    out["items"],
+			"total":    total,
+			"hasMore":  hasMore,
+			"page":     resPage,
+			"pageSize": resPageSize,
+		}, nil
 	}
 }
 

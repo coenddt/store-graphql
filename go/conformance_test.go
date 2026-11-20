@@ -25,6 +25,14 @@ type conformanceCase struct {
 			Gql             string   `json:"gql"`
 			ParamsLimit     *int     `json:"paramsLimit"`
 			ErrorCodePrefix string   `json:"errorCodePrefix"`
+			PageField       string   `json:"pageField"`
+			Total           *int     `json:"total"`
+			HasMore         *bool    `json:"hasMore"`
+			Page            *int     `json:"page"`
+			PageSize        *int     `json:"pageSize"`
+			ItemsLength     *int     `json:"itemsLength"`
+			ParamsPage      *int     `json:"paramsPage"`
+			ParamsPageSize  *int     `json:"paramsPageSize"`
 		} `json:"expect"`
 	} `json:"steps"`
 }
@@ -74,6 +82,48 @@ func TestConformance(t *testing.T) {
 			params := st.lastParams
 			if params == nil || params["l"] != *expect.ParamsLimit {
 				t.Fatalf("step#%d params.l 不符: %v", i, params)
+			}
+		}
+		if expect.PageField != "" {
+			page, _ := data[expect.PageField].(map[string]interface{})
+			if page == nil {
+				t.Fatalf("step#%d data 缺少 %q", i, expect.PageField)
+			}
+			if expect.Total != nil {
+				if got, _ := asInt(page["total"]); got != *expect.Total {
+					t.Fatalf("step#%d total 不符: %v", i, page["total"])
+				}
+			}
+			if expect.HasMore != nil {
+				if got, _ := page["hasMore"].(bool); got != *expect.HasMore {
+					t.Fatalf("step#%d hasMore 不符: %v", i, page["hasMore"])
+				}
+			}
+			if expect.Page != nil {
+				if got, _ := asInt(page["page"]); got != *expect.Page {
+					t.Fatalf("step#%d page 不符: %v", i, page["page"])
+				}
+			}
+			if expect.PageSize != nil {
+				if got, _ := asInt(page["pageSize"]); got != *expect.PageSize {
+					t.Fatalf("step#%d pageSize 不符: %v", i, page["pageSize"])
+				}
+			}
+			if expect.ItemsLength != nil {
+				items, _ := page["items"].([]interface{})
+				if len(items) != *expect.ItemsLength {
+					t.Fatalf("step#%d itemsLength 不符: %d", i, len(items))
+				}
+			}
+		}
+		if expect.ParamsPage != nil {
+			if got, _ := asInt(st.lastParams["page"]); got != *expect.ParamsPage {
+				t.Fatalf("step#%d params.page 不符: %v", i, st.lastParams)
+			}
+		}
+		if expect.ParamsPageSize != nil {
+			if got, _ := asInt(st.lastParams["pageSize"]); got != *expect.ParamsPageSize {
+				t.Fatalf("step#%d params.pageSize 不符: %v", i, st.lastParams)
 			}
 		}
 	}

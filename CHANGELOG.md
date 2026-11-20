@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.1.0 (2026-11-20)
+
+> 向后兼容扩展：只新增根字段与类型，`listX` 的入参、返回结构与错误契约一律不变。
+
+### Added
+
+- **分页根字段 `pageX`**（三端同步）：`pageX(condition: JSON, sort: JSON, page: Int, pageSize: Int): XPage!`，
+  `XPage { items: [X!]!, total: Int!, hasMore: Boolean!, page: Int!, pageSize: Int! }`。
+  直接走宿主 `queryWithCount`（node `store.queryWithCount` / py `store.query_with_count` / go `QueryWithCount`），
+  不碰 rust core，也不重算 count。
+- **分页语义**（spec/01、02）：`page` 缺省 0、`pageSize` 缺省 50（上限 5000）、深翻页 `page*pageSize ≤ 100000`；
+  越界 / `$near` 并用 / 宿主缺能力分别显式报 `ERR_LIMIT:` / `ERR_CAPABILITY:`，不静默截断或降级。
+- **conformance 契约扩展**：`expect` 新增 `pageField` / `total` / `hasMore` / `page` / `pageSize` /
+  `itemsLength` / `paramsPage` / `paramsPageSize`；用例覆盖缺省 pageSize、total、hasMore 边界、
+  pageSize 上限、深翻页上限、page 负数与 `$near` 互斥。
+
+### Build
+
+- `go/go.mod` 间接依赖对齐本地 `go-store`（`modernc.org/sqlite` 1.62.0 等），保证 `go test ./...` 可运行。
+
+### 未改动
+
+- `listX` 的 `limit` 守卫（缺省 50 / 上限 1000）与 `$near` 互斥规则保持原样。
+- 独立 `countX` 不生成（计数由 `pageX.total` 覆盖）。
+
 ## 1.0.0 (2026-11-08)
 
 > 目标版本 **1.0.0**（未发布；版本号由发布流程统一 bump）。本轮采用「旧值原地不动 + 新增规范化字段」的

@@ -27,6 +27,7 @@
 | 列模型名 | `store.list()` → `string[]` | `store.list()` → `list[str]` | 显式传入（`Options.Schemas`，go-store 不回读 defn） |
 | 取模型 defn | `store.get(name)` | `store.get(name)` | 同上（defn 即传入物） |
 | GQL 查询 | `store.query(gql, params)` | `store.query(gql, params)` | `Query(ctx, gql, params, actx)` |
+| 列表 + total | `store.queryWithCount(gql, params)` | `store.query_with_count(gql, params)` | `QueryWithCount(ctx, gql, params, actx)` |
 | 写入 | `store.insert/update/remove(...)` | `store.insert/update/remove(...)` | `Insert/Update/Remove(ctx, ...)` |
 | 上下文 | `store.setContext(ctx)` | `store.set_context(ctx)` / `setContext` | 显式 `actx` 参数（`*gostore.Context`） |
 
@@ -34,5 +35,6 @@
 
 ## v0 范围与明确不支持项
 
-- Query：`getX` / `listX`；Mutation：`createX` / `updateX` / `deleteX`
-- **不支持**：subscription（store 无订阅语义）；`countX` 聚合根、输出别名（alias）、`skip` 分页偏移——均待 core 侧语义核实后 v1 收编（见 01/02 的「待核实」）
+- Query：`getX` / `listX` / `pageX`；Mutation：`createX` / `updateX` / `deleteX`
+- `pageX` 依赖宿主 `queryWithCount`（三宿主均已提供，见上表）；该能力缺失时 `pageX` resolver 显式报 `ERR_CAPABILITY:`，不静默回落为 `listX`
+- **不支持**：subscription（store 无订阅语义）；`countX` 独立聚合根（计数已由 `pageX.total` 覆盖）、输出别名（alias）、独立的 `skip` 根参数（分页统一走 `pageX.page/pageSize`）

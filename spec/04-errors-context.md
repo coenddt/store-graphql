@@ -5,6 +5,8 @@
 - store 抛错 ⇒ 进入 GraphQL 标准 `errors` 数组，**原样透传 message，不吞不改写不跨语义兜底**（对齐 no-error-masking：允许被拦截，禁止静默失守）
 - data 与 errors 并存是 GraphQL 原生语义：列表部分失败由执行器按字段置 null + 记 error，适配层不做额外包裹
 - 成功响应不得出现错误文案；resolver 返回值即 `data`，不做「成功/失败」二次包装
+- `pageX` 守卫错误同样走本通道：参数越界 / `$near` 互斥 / 深翻页超限统一 `ERR_LIMIT:`；
+  宿主缺 `queryWithCount` 能力 ⇒ `ERR_CAPABILITY:`（`extensions.code` 按下方通用规则推导为 `CAPABILITY`）
 
 | 端 | 通道 |
 |---|---|

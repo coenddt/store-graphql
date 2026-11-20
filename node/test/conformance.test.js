@@ -48,6 +48,23 @@ function assertStepResult(step, i, store, result) {
   if (step.expect.paramsLimit != null) {
     assert.equal(store.gqlLog.at(-1).params.l, step.expect.paramsLimit, `step#${i} params.l 不符`);
   }
+  const exp = step.expect;
+  if (exp.pageField) {
+    const page = data[exp.pageField] || {};
+    if (exp.total != null) assert.equal(page.total, exp.total, `step#${i} total 不符`);
+    if (exp.hasMore != null) assert.equal(page.hasMore, exp.hasMore, `step#${i} hasMore 不符`);
+    if (exp.page != null) assert.equal(page.page, exp.page, `step#${i} page 不符`);
+    if (exp.pageSize != null) assert.equal(page.pageSize, exp.pageSize, `step#${i} pageSize 不符`);
+    if (exp.itemsLength != null) {
+      assert.equal((page.items || []).length, exp.itemsLength, `step#${i} itemsLength 不符`);
+    }
+  }
+  if (exp.paramsPage != null) {
+    assert.equal(store.gqlLog.at(-1).params.page, exp.paramsPage, `step#${i} params.page 不符`);
+  }
+  if (exp.paramsPageSize != null) {
+    assert.equal(store.gqlLog.at(-1).params.pageSize, exp.paramsPageSize, `step#${i} params.pageSize 不符`);
+  }
 }
 
 test(`conformance: ${c.name}`, async () => {

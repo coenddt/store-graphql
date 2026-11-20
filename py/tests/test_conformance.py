@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import inspect
 import json
 from pathlib import Path
 
@@ -43,6 +44,27 @@ class CaseStore:
             if not cond or all(r.get(k) == v for k, v in cond.items())
         ]
 
+    async def query_with_count(self, gql, params=None):
+        self.gql_log.append({"gql": gql, "params": params})
+        cond = (params or {}).get("c0")
+        matched = [
+            r
+            for r in self.rows
+            if not cond or all(r.get(k) == v for k, v in cond.items())
+        ]
+        page = (params or {}).get("page")
+        page_size = (params or {}).get("pageSize")
+        page = 0 if page is None else page
+        page_size = 50 if page_size is None else page_size
+        start = page * page_size
+        return {
+            "items": matched[start : start + page_size],
+            "total": len(matched),
+            "hasMore": (page + 1) * page_size < len(matched),
+            "page": page,
+            "pageSize": page_size,
+        }
+
     async def insert(self, _name, data):
         doc = {"_id": "u1", **data}
         self.rows.append(doc)
@@ -67,9 +89,13 @@ def test_conformance():
     schema = build_graphql_schema(store)
 
     async def run_step(step):
-        result = await gql_execute(
+        # graphql-core 3.3 的 execute 在无异步 resolver 时直接返回 ExecutionResult，
+        # 有异步 resolver 时返回 awaitable —— 两种都兼容。
+        result = gql_execute(
             schema, parse(step["query"]), variable_values=step.get("variables") or {}
         )
+        if inspect.isawaitable(result):
+            result = await result
         return result
 
     async def run_all():
@@ -95,5 +121,27 @@ def test_conformance():
                 assert store.gql_log[-1]["params"]["l"] == expect["paramsLimit"], (
                     f"step#{i} params.l 不符"
                 )
+            if expect.get("pageField"):
+                page = data.get(expect["pageField"]) or {}
+                if "total" in expect:
+                    assert page["total"] == expect["total"], f"step#{i} total 不符"
+                if "hasMore" in expect:
+                    assert page["hasMore"] == expect["hasMore"], f"step#{i} hasMore 不符"
+                if "page" in expect:
+                    assert page["page"] == expect["page"], f"step#{i} page 不符"
+                if "pageSize" in expect:
+                    assert page["pageSize"] == expect["pageSize"], f"step#{i} pageSize 不符"
+                if "itemsLength" in expect:
+                    assert len(page.get("items") or []) == expect["itemsLength"], (
+                        f"step#{i} itemsLength 不符"
+                    )
+            if "paramsPage" in expect:
+                assert store.gql_log[-1]["params"]["page"] == expect["paramsPage"], (
+                    f"step#{i} params.page 不符"
+                )
+            if "paramsPageSize" in expect:
+                assert (
+                    store.gql_log[-1]["params"]["pageSize"] == expect["paramsPageSize"]
+                ), f"step#{i} params.pageSize 不符"
 
     asyncio.run(run_all())

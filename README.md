@@ -11,7 +11,7 @@
 
 - schema 是唯一事实源——没有第二套类型系统，没有手写 SDL。
 - 每个字段都走 store 既有语义：RBAC、计算列、关系、方言路由。
-- 当前发布：`1.0.0`（Node ≥ 18、Python ≥ 3.10，`go/` 下另有 v0 Go 适配器）。
+- 当前发布：`1.1.0`（Node ≥ 18、Python ≥ 3.10，`go/` 下另有 v0 Go 适配器）。
 
 ## 一个屏幕，九个请求
 
@@ -25,11 +25,11 @@
 
 ## 它到底做什么
 
-它是一层协议皮，不是数据层。store 知道的每个可写模型，它生成类型、两个查询根、三个变更根，然后把执行交回 REST 与 gRPC 皮肤共用的同一个引擎。
+它是一层协议皮，不是数据层。store 知道的每个可写模型，它生成类型、三个查询根、三个变更根，然后把执行交回 REST 与 gRPC 皮肤共用的同一个引擎。
 
 | 你在 JSON schema 里声明 | GraphQL 面得到 |
 |---|---|
-| 模型 `User` | `type User`、`getUser`、`listUser`、`createUser`、`updateUser`、`deleteUser` |
+| 模型 `User` | `type User`、`getUser`、`listUser`、`pageUser`、`createUser`、`updateUser`、`deleteUser` |
 | `_id` | `ID!`；其余字段一律可空 |
 | `string`、`datetime` | `String`——datetime 按 ISO 字符串透传 |
 | `int` / `float` / `bool` | `Int` / `Float` / `Boolean` |
@@ -43,9 +43,18 @@
 ```graphql
 type User { _id: ID! name: String age: Int _score: Float }
 
+type UserPage {
+  items: [User!]!
+  total: Int!
+  hasMore: Boolean!
+  page: Int!
+  pageSize: Int!
+}
+
 type Query {
   getUser(id: ID!): User
   listUser(condition: JSON, sort: JSON, limit: Int): [User!]!
+  pageUser(condition: JSON, sort: JSON, page: Int, pageSize: Int): UserPage!
 }
 
 type Mutation {
@@ -224,7 +233,7 @@ curl -s http://localhost:4000/graphql \
 ## 边界：什么时候不要用它
 
 - **需要订阅。** 没有。store 没有订阅语义，这层皮肤也不发明。
-- **需要 offset 分页或 count 根。** `listX` 只暴露 `limit`；`skip` / `page` 和 `countX` 不生成。
+- **需要 offset 分页或 count 根。** 用 `pageX`（`page` 缺省 0、`pageSize` 缺省 50/上限 5000、`page*pageSize` 上限 100000）：一次返回 `items + total + hasMore`。`listX` 契约不变，独立的 `countX` 不生成。
 - **指望关系自动出现。** `1.0.0` 只类型化 `fields` 与 `computes`，`defn.relations` 不自动暴露。
 - **想内联 JSON 参数。** `condition`、`sort`、`input`、`set` 只接受变量，内联字面量被刻意拒绝。
 - **依赖输出别名。** v0 按字段名序列化，丢弃别名。

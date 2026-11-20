@@ -22,13 +22,14 @@ const { GraphQLJSON, mapFields, modelFields } = require('./types');
 const {
   makeGet,
   makeList,
+  makePage,
   makeCreate,
   makeUpdate,
   makeDelete,
 } = require('./resolvers');
 
 // ── schema 构建 ──
-/** 单模型的 Query 字段（get / list）与 Mutation 字段（create / update / delete） */
+/** 单模型的 Query 字段（get / list / page）与 Mutation 字段（create / update / delete） */
 function buildModelFields(ctx, name, defn) {
   const { store, idField, resolveWithOverride, queryFields, mutationFields } = ctx;
   const modelType = new GraphQLObjectType({
@@ -49,6 +50,28 @@ function buildModelFields(ctx, name, defn) {
       limit: { type: GraphQLInt },
     },
     resolve: resolveWithOverride(`Query.list${name}`, makeList(store, name)),
+  };
+  // spec/01 pageX：列表 + total + hasMore（宿主 queryWithCount 的薄暴露）
+  const pageType = new GraphQLObjectType({
+    name: `${name}Page`,
+    description: `${name} 分页结果（items + total + hasMore + page + pageSize）`,
+    fields: {
+      items: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(modelType))) },
+      total: { type: new GraphQLNonNull(GraphQLInt) },
+      hasMore: { type: new GraphQLNonNull(GraphQLBoolean) },
+      page: { type: new GraphQLNonNull(GraphQLInt) },
+      pageSize: { type: new GraphQLNonNull(GraphQLInt) },
+    },
+  });
+  queryFields[`page${name}`] = {
+    type: new GraphQLNonNull(pageType),
+    args: {
+      condition: { type: GraphQLJSON },
+      sort: { type: GraphQLJSON },
+      page: { type: GraphQLInt },
+      pageSize: { type: GraphQLInt },
+    },
+    resolve: resolveWithOverride(`Query.page${name}`, makePage(store, name)),
   };
   if ((defn['x-graphql'] || {}).readonly) return; // spec/03 钩子 1：模型级 readonly → 只出 Query
   mutationFields[`create${name}`] = {

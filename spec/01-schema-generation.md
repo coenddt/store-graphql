@@ -50,9 +50,18 @@ GraphQL 规范把 `__` 前缀保留给 introspection，故凡以 `__` 开头的�
 ```graphql
 type X { _id: ID!, ...fields, ...computes }
 
+type XPage {
+  items: [X!]!
+  total: Int!
+  hasMore: Boolean!
+  page: Int!
+  pageSize: Int!
+}
+
 type Query {
   getX(id: ID!): X
   listX(condition: JSON, sort: JSON, limit: Int): [X!]!
+  pageX(condition: JSON, sort: JSON, page: Int, pageSize: Int): XPage!
 }
 
 type Mutation {
@@ -62,9 +71,26 @@ type Mutation {
 }
 ```
 
-- 参数三键 `$condition / $sort / $limit` 与现有 GQL 口径一致（出处：`py-store/llms.txt` 用例 `Model($condition:@c0,$sort:@s1,$limit:@l)`；`nodejs-store/src/index.js` 用法注释）
-- **待核实（v1）**：偏移分页（`$skip`/`$page`）在 core 的真实参数名；核实前 `listX` 不提供 offset 参数（宁缺毋滥，不发明语义）
-- **待核实（v1）**：`countX` 走 `QueryWithCount`（go 已有，`go-store/store.go:200`）需要 node/py 对应口径；核实前不生成
+- `listX` 参数三键 `$condition / $sort / $limit` 与现有 GQL 口径一致（出处：`py-store/llms.txt` 用例 `Model($condition:@c0,$sort:@s1,$limit:@l)`；`nodejs-store/src/index.js` 用法注释）；`pageX` 为**新增字段**，`listX` 的入参与返回结构一律不变
+- `pageX` 是宿主 `queryWithCount` 的薄暴露（core `planQueryWithCount` 已有 `query + count_command + Page`，`rust-store/core/src/command/count.rs`；宿主出参 `{items,total,hasMore,page,pageSize}`，`nodejs-store/src/crud/query.js:139-153`、`py-store` 同名方法、`go-store/store.go:181-232`）；适配层不重算 `total`，也不自己拼 count 查询
+- **独立 `countX` 不生成**：计数由 `pageX.total` 提供，避免同一语义两套根字段
+
+## pageX 分页语义（v1，2026-11 落地）
+
+| 项 | 规则 |
+|---|---|
+| `page` | 缺省 `0`；显式值必须是 `≥ 0` 的整数，否则 `ERR_LIMIT:` 抛错 |
+| `pageSize` | 缺省 `50`；必须是 `> 0` 的整数，且 `≤ 5000`（宿主 `MAX_PAGE_SIZE`）；越界 `ERR_LIMIT:` 抛错 |
+| 深翻页 | `page * pageSize ≤ 100000`；超限 `ERR_LIMIT:` 抛错（offset 深翻页代价高，不静默执行） |
+| `total` | 与 `condition` 同语义的计数（含 RBAC owner / 行级条件），忽略分页 |
+| `hasMore` | `(page + 1) * pageSize < total`（与 core `Page::has_more` 同一判据，适配层不另立） |
+| `$near` | `condition` 含 `$near` ⇒ `ERR_LIMIT:` 抛错：向量检索的条数唯一来源是 `$near.$limit`，无 offset 语义，不能与 `page/pageSize` 组合 |
+| 返回值 | `page` / `pageSize` 原样回显宿主解析结果；`items` 恒为数组（空页为 `[]`） |
+
+- 数值（缺省 50 / 上限 5000 / 深翻页 100000）为适配层常量，调整先改本 spec 再三端同步
+- 非整数由 GraphQL `Int` 类型层拒绝（标准校验错误）；resolver 只兜 `Int` 可表达的越界值
+- 一律抛错、不静默截断、不静默夹取（对齐 no-error-masking）；错误稳定前缀沿用 `ERR_LIMIT:`
+- 宿主缺少 `queryWithCount` 时 `pageX` resolver 报 `ERR_CAPABILITY:`（显式失败，不降级为 `listX`）
 
 ## 模型级注记（声明式自定义，spec/03 的第 1 钩子）
 

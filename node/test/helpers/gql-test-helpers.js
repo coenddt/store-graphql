@@ -28,6 +28,24 @@ function makeGqlMockStore({ names, schemaDefn, idOf }) {
       const cond = params && params.c0;
       return rows.filter((r) => !cond || Object.entries(cond).every(([k, v]) => r[k] === v));
     },
+    // spec/01 pageX：模拟宿主 queryWithCount 信封（含分页切片与 total/hasMore）
+    async queryWithCount(gql, params) {
+      gqlLog.push({ gql, params });
+      const cond = params && params.c0;
+      const matched = rows.filter(
+        (r) => !cond || Object.entries(cond).every(([k, v]) => r[k] === v)
+      );
+      const page = params && params.page != null ? params.page : 0;
+      const pageSize = params && params.pageSize != null ? params.pageSize : 50;
+      const start = page * pageSize;
+      return {
+        items: matched.slice(start, start + pageSize),
+        total: matched.length,
+        hasMore: (page + 1) * pageSize < matched.length,
+        page,
+        pageSize,
+      };
+    },
     async insert(_name, data) {
       const doc = { _id: idOf(rows), ...data };
       rows.push(doc);

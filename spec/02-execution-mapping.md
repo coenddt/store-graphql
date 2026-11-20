@@ -9,9 +9,11 @@
 | `condition` | `$condition:@c0` | `c0` | 非 null 才拼 |
 | `sort` | `$sort:@s1` | `s1` | 非 null 才拼 |
 | `limit` | `$limit:@l` | `l` | 非 null 才拼 |
+| `page` / `pageSize`（`pageX`） | **不进 GQL 参数头** | `page` / `pageSize` | 恒传（缺省已解析），由宿主 `queryWithCount` 落为 LIMIT/OFFSET |
 
 - `getX(id)` ⇒ `X($condition:@c0){<投影>}`，`c0 = {"_id": id}`，取结果首条，空则 `null`
 - `listX(...)` ⇒ 按上表按需拼接参数头 + `{<投影>}`（`limit` 恒拼接，见下节守卫）
+- `pageX(...)` ⇒ 只拼 `$condition:@c0` / `$sort:@s1`（无 `$limit` / `$skip`），params 额外带 `page` / `pageSize`，调用宿主 `queryWithCount`；投影取 **`items` 子选择**（`total` / `hasMore` / `page` / `pageSize` 是元字段，不进入 store 投影）
 - 主键字段名 `id_field` v0 固定 `_id`（与 store-api spec/01 一致；不改参数面）
 
 ## limit 守卫（适配层语义，2026-10 性能核实后新增）
@@ -22,6 +24,17 @@
 - 数值（缺省 50 / 上限 1000）为适配层常量，调整先改本 spec 再三端同步
 - `condition` 含 `$near` 时：**不拼**根 `$limit`；显式传 `limit` → `ERR_LIMIT:`；
   `$near.$limit > 1000` → `ERR_LIMIT:`。`$near.$limit` 必填由 core 校验。
+
+## pageX 守卫与宿主调用（spec/01 pageX 语义）
+
+- 宿主能力：resolver 检测 `queryWithCount`（node `store.queryWithCount` / py `query_with_count`（兼容 `queryWithCount`）/ go 可选接口 `QueryWithCount`）；缺失 ⇒ `ERR_CAPABILITY:`，不降级为 `listX`
+- `$near` 判定沿用 `findByKey(condition, '$near')`：命中即 `ERR_LIMIT:`（向量检索无 offset 语义）
+- 参数守卫顺序固定：**能力 → `$near` → `page` → `pageSize` → 深翻页**（文案不漂移，三端一致）
+  - `page` 缺省 0，`< 0` ⇒ `ERR_LIMIT:`
+  - `pageSize` 缺省 50，`≤ 0` 或 `> 5000` ⇒ `ERR_LIMIT:`
+  - `page * pageSize > 100000` ⇒ `ERR_LIMIT:`
+- 通过守卫后一次 `queryWithCount(gql, {c0?, s1?, page, pageSize})`，直接返回宿主信封（`items/total/hasMore/page/pageSize`）；适配层不重算、不二次查询
+- 该路径只读，不触 core 改动；`listX` 的 limit 守卫与 `$near` 互斥规则保持不变
 
 ## Mutation 语义
 

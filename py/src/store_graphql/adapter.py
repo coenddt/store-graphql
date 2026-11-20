@@ -36,6 +36,12 @@ ARCHIVE_SUFFIX = "Deleted"
 LIST_LIMIT_DEFAULT = 50
 LIST_LIMIT_MAX = 1000
 
+# spec/01 pageX 分页常量:pageSize 上限对齐宿主 MAX_PAGE_SIZE;深翻页守 offset 上界。
+# 调整先改 spec 再三端同步。
+PAGE_SIZE_DEFAULT = 50
+PAGE_SIZE_MAX = 5000
+PAGE_MAX_OFFSET = 100000
+
 # spec/04 查询深度守卫:深度 = 从 operation 顶层 selectionSet 起的最大字段嵌套层数,
 # FragmentSpread 按定义递归(visiting 防环);超限 HTTP 400 + ERR_DEPTH: 稳定前缀。
 MAX_QUERY_DEPTH = 10
@@ -262,10 +268,9 @@ def _should_include(node, variables):
     return True
 
 
-def projection_from_info(info):
-    """把 GraphQL selection 展开成 GQL 投影串下推给 store（alias 忽略，spec/02 v0）；全空兜底 `_id`。"""
-    root = next((n for n in info.field_nodes if n.kind == K_FIELD), None)
-    if root is None or root.selection_set is None:
+def _projection_from_selection(info, selection_set):
+    """把 selection set 展开成 GQL 投影串（alias 忽略，spec/02 v0）；全空兜底 `_id`。"""
+    if selection_set is None:
         return "_id"
     variables = info.variable_values
     if not isinstance(
@@ -300,9 +305,49 @@ def projection_from_info(info):
         return None
 
     return (
-        ", ".join(filter(None, (walk(s) for s in root.selection_set.selections)))
-        or "_id"
+        ", ".join(filter(None, (walk(s) for s in selection_set.selections))) or "_id"
     )
+
+
+def projection_from_info(info):
+    """把根字段的 GraphQL selection 展开成 GQL 投影串下推给 store（spec/02）。"""
+    root = next((n for n in info.field_nodes if n.kind == K_FIELD), None)
+    if root is None:
+        return "_id"
+    return _projection_from_selection(info, root.selection_set)
+
+
+def _find_field(info, selection_set, name, visiting=None):
+    """在 selection set 中按字段名查找（fragment 展开，visiting 防环）。"""
+    visiting = visiting or set()
+    if selection_set is None:
+        return None
+    for sel in selection_set.selections:
+        if sel.kind == K_FIELD and sel.name.value == name:
+            return sel
+        if sel.kind == K_INLINE_FRAGMENT:
+            hit = _find_field(info, sel.selection_set, name, visiting)
+            if hit is not None:
+                return hit
+        elif sel.kind == K_FRAGMENT_SPREAD:
+            frag_name = sel.name.value
+            if frag_name in visiting:
+                continue
+            frag = (info.fragments or {}).get(frag_name)
+            if frag is not None:
+                hit = _find_field(
+                    info, frag.selection_set, name, visiting | {frag_name}
+                )
+                if hit is not None:
+                    return hit
+    return None
+
+
+def projection_for_field(info, field_name):
+    """取根字段下指定子字段的 selection 投影（pageX 的 items 用）。"""
+    root = next((n for n in info.field_nodes if n.kind == K_FIELD), None)
+    child = _find_field(info, root.selection_set if root is not None else None, field_name)
+    return _projection_from_selection(info, child.selection_set if child else None)
 
 
 # ── spec/02：根 resolver（投影下推，无 N+1）──
@@ -380,6 +425,57 @@ def _make_list(store, name):
             params["l"] = limit
         head += f"({','.join(parts)})"
         return await store.query(f"{head} {{ {projection} }}", params)
+
+    return resolve
+
+
+def _assert_page_bounds(page, page_size):
+    """spec/01 pageX：解析并校验分页参数，越界抛 ERR_LIMIT（不静默截断/夹取）。"""
+    p = 0 if page is None else page
+    ps = PAGE_SIZE_DEFAULT if page_size is None else page_size
+    if not isinstance(p, int) or isinstance(p, bool) or p < 0:
+        raise ValueError(f"ERR_LIMIT:page 必须是非负整数,收到 {page}")
+    if not isinstance(ps, int) or isinstance(ps, bool) or ps <= 0:
+        raise ValueError(f"ERR_LIMIT:pageSize 必须是正整数,收到 {page_size}")
+    if ps > PAGE_SIZE_MAX:
+        raise ValueError(f"ERR_LIMIT:pageSize 上限 {PAGE_SIZE_MAX},收到 {ps}")
+    if p * ps > PAGE_MAX_OFFSET:
+        raise ValueError(f"ERR_LIMIT:page*pageSize 上限 {PAGE_MAX_OFFSET},收到 {p * ps}")
+    return p, ps
+
+
+def _make_page(store, name):
+    """生成 page{name} resolver 工厂：走宿主 query_with_count，投影只下推 items 子选择（spec/01）。"""
+
+    async def resolve(_src, info, *, condition=None, sort=None, page=None, pageSize=None):
+        """校验分页参数后调用宿主计数查询，返回 {items,total,hasMore,page,pageSize}。"""
+        counter = getattr(store, "query_with_count", None) or getattr(
+            store, "queryWithCount", None
+        )
+        if not callable(counter):
+            raise ValueError(
+                "ERR_CAPABILITY:宿主 store 未提供 query_with_count，pageX 不可用（spec/00）"
+            )
+        if _find_key(condition, "$near") is not None:
+            raise ValueError("ERR_LIMIT:pageX 与 $near 向量检索互斥（向量检索无 offset 语义）")
+        p, ps = _assert_page_bounds(page, pageSize)
+        projection = projection_for_field(info, "items")
+        parts, params = [], {"page": p, "pageSize": ps}
+        if condition is not None:
+            parts.append("$condition:@c0")
+            params["c0"] = condition
+        if sort is not None:
+            parts.append("$sort:@s1")
+            params["s1"] = sort
+        head = f"{name}({','.join(parts)})" if parts else name
+        res = await counter(f"{head} {{ {projection} }}", params)
+        return {
+            "items": res["items"],
+            "total": res["total"],
+            "hasMore": res["hasMore"],
+            "page": res["page"],
+            "pageSize": res["pageSize"],
+        }
 
     return resolve
 
@@ -480,6 +576,30 @@ def build_graphql_schema(
                 "limit": GraphQLArgument(GraphQLInt),
             },
             resolve=resolve_with_override(f"Query.list{name}", _make_list(store, name)),
+        )
+        # spec/01 pageX：列表 + total + hasMore（宿主 query_with_count 的薄暴露）
+        page_type = GraphQLObjectType(
+            name=f"{name}Page",
+            description=f"{name} 分页结果（items + total + hasMore + page + pageSize）",
+            fields={
+                "items": GraphQLField(
+                    GraphQLNonNull(GraphQLList(GraphQLNonNull(model_type)))
+                ),
+                "total": GraphQLField(GraphQLNonNull(GraphQLInt)),
+                "hasMore": GraphQLField(GraphQLNonNull(GraphQLBoolean)),
+                "page": GraphQLField(GraphQLNonNull(GraphQLInt)),
+                "pageSize": GraphQLField(GraphQLNonNull(GraphQLInt)),
+            },
+        )
+        query_fields[f"page{name}"] = GraphQLField(
+            GraphQLNonNull(page_type),
+            args={
+                "condition": GraphQLArgument(GraphQLJSON),
+                "sort": GraphQLArgument(GraphQLJSON),
+                "page": GraphQLArgument(GraphQLInt),
+                "pageSize": GraphQLArgument(GraphQLInt),
+            },
+            resolve=resolve_with_override(f"Query.page{name}", _make_page(store, name)),
         )
         if not xg.get("readonly"):  # spec/03 钩子 1：模型级 readonly → 只出 Query
             mutation_fields[f"create{name}"] = GraphQLField(

@@ -6,12 +6,18 @@
  * 投影下推（无 N+1）、limit 守卫与 `$near` 互斥判定。resolver 只经 store 端口取数。
  */
 
-const { projectionFromResolveInfo } = require('./projection');
+const { projectionFromResolveInfo, projectionForChild } = require('./projection');
 
 // spec/02 limit 守卫常量：core 的行数封顶仅 text2query 档生效（standard 档原样返回），
 // 适配层守上界；调整先改 spec 再三端同步。
 const LIST_LIMIT_DEFAULT = 50;
 const LIST_LIMIT_MAX = 1000;
+
+// spec/01 pageX 分页常量：pageSize 上限对齐宿主 MAX_PAGE_SIZE；深翻页守 offset 上界。
+// 调整先改 spec 再三端同步。
+const PAGE_SIZE_DEFAULT = 50;
+const PAGE_SIZE_MAX = 5000;
+const PAGE_MAX_OFFSET = 100000;
 
 /** 按 id 回查单行并取首行（get / update 回读共用）；查不到返回 null */
 async function queryByIdRow(store, name, idField, id, projection) {
@@ -92,6 +98,58 @@ function makeList(store, name) {
   };
 }
 
+// ── spec/01 pageX：page/pageSize 守卫（不静默截断，越界一律 ERR_LIMIT） ──
+
+/** 解析并校验分页参数：缺省 page=0 / pageSize=50，越界抛 ERR_LIMIT */
+function assertPageBounds(page, pageSize) {
+  const p = page != null ? page : 0;
+  const ps = pageSize != null ? pageSize : PAGE_SIZE_DEFAULT;
+  if (!Number.isInteger(p) || p < 0) {
+    throw new Error(`ERR_LIMIT:page 必须是非负整数,收到 ${page}`);
+  }
+  if (!Number.isInteger(ps) || ps <= 0) {
+    throw new Error(`ERR_LIMIT:pageSize 必须是正整数,收到 ${pageSize}`);
+  }
+  if (ps > PAGE_SIZE_MAX) {
+    throw new Error(`ERR_LIMIT:pageSize 上限 ${PAGE_SIZE_MAX},收到 ${ps}`);
+  }
+  if (p * ps > PAGE_MAX_OFFSET) {
+    throw new Error(`ERR_LIMIT:page*pageSize 上限 ${PAGE_MAX_OFFSET},收到 ${p * ps}`);
+  }
+  return { page: p, pageSize: ps };
+}
+
+/**
+ * 生成分页 resolver（spec/01 pageX）：调用宿主 queryWithCount，
+ * 投影只下推 items 子选择；total/hasMore/page/pageSize 是宿主信封，不由适配层重算。
+ */
+function makePage(store, name) {
+  return async (_src, args, _ctx, info) => {
+    if (typeof store.queryWithCount !== 'function') {
+      throw new Error('ERR_CAPABILITY:宿主 store 未提供 queryWithCount，pageX 不可用（spec/00）');
+    }
+    if (findByKey(args.condition, '$near') != null) {
+      throw new Error('ERR_LIMIT:pageX 与 $near 向量检索互斥（向量检索无 offset 语义）');
+    }
+    const { page, pageSize } = assertPageBounds(args.page, args.pageSize);
+    const projection = projectionForChild(info, 'items');
+    const parts = [];
+    const params = { page, pageSize };
+    if (args.condition != null) { parts.push('$condition:@c0'); params.c0 = args.condition; }
+    if (args.sort != null) { parts.push('$sort:@s1'); params.s1 = args.sort; }
+    // 无 condition/sort 时不产出空括号 `X()`，head 直接是模型名（合法 GQL）
+    const head = parts.length ? `${name}(${parts.join(',')})` : name;
+    const res = await store.queryWithCount(`${head} { ${projection} }`, params);
+    return {
+      items: res.items,
+      total: res.total,
+      hasMore: res.hasMore,
+      page: res.page,
+      pageSize: res.pageSize,
+    };
+  };
+}
+
 /** 生成插入 resolver（原样透传 input 给 store.insert） */
 function makeCreate(store, name) {
   return async (_src, args) => store.insert(name, args.input);
@@ -117,9 +175,14 @@ function makeDelete(store, name, idField) {
 module.exports = {
   LIST_LIMIT_DEFAULT,
   LIST_LIMIT_MAX,
+  PAGE_SIZE_DEFAULT,
+  PAGE_SIZE_MAX,
+  PAGE_MAX_OFFSET,
   queryByIdRow,
   makeGet,
   makeList,
+  makePage,
+  assertPageBounds,
   makeCreate,
   makeUpdate,
   makeDelete,

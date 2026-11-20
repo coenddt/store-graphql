@@ -11,7 +11,7 @@
 
 - The schema is the only source of truth — no second type system, no hand-written SDL.
 - Every field rides the store's existing semantics: RBAC, computed columns, relations, dialect routing.
-- Current release: `1.0.0` (Node ≥ 18, Python ≥ 3.10, plus a v0 Go adapter in `go/`).
+- Current release: `1.1.0` (Node ≥ 18, Python ≥ 3.10, plus a v0 Go adapter in `go/`).
 
 ## Nine requests for one screen
 
@@ -23,11 +23,11 @@ The screen needed one tree. The client asked for nine lists.
 
 ## What it actually does
 
-It is a protocol skin, not a data layer. For every writable model the store knows about, it generates the type, two query roots and three mutation roots, then hands execution back to the same engine the REST and gRPC skins use.
+It is a protocol skin, not a data layer. For every writable model the store knows about, it generates the type, three query roots and three mutation roots, then hands execution back to the same engine the REST and gRPC skins use.
 
 | You declare in the JSON schema | GraphQL surface gets |
 |---|---|
-| model `User` | `type User`, `getUser`, `listUser`, `createUser`, `updateUser`, `deleteUser` |
+| model `User` | `type User`, `getUser`, `listUser`, `pageUser`, `createUser`, `updateUser`, `deleteUser` |
 | `_id` | `ID!`; every other field is nullable |
 | `string`, `datetime` | `String` — datetime is passed through as an ISO string |
 | `int` / `float` / `bool` | `Int` / `Float` / `Boolean` |
@@ -41,9 +41,18 @@ The generated surface for one model looks like this (the shape asserted by both 
 ```graphql
 type User { _id: ID! name: String age: Int _score: Float }
 
+type UserPage {
+  items: [User!]!
+  total: Int!
+  hasMore: Boolean!
+  page: Int!
+  pageSize: Int!
+}
+
 type Query {
   getUser(id: ID!): User
   listUser(condition: JSON, sort: JSON, limit: Int): [User!]!
+  pageUser(condition: JSON, sort: JSON, page: Int, pageSize: Int): UserPage!
 }
 
 type Mutation {
@@ -224,7 +233,7 @@ curl -s http://localhost:4000/graphql \
 ## Boundaries: when not to use it
 
 - **You need subscriptions.** There are none. The store has no subscription semantics, and this skin does not invent them.
-- **You need offset paging or a count root.** `listX` exposes only `limit`; `skip` / `page` and `countX` are not generated.
+- **You need offset paging or a count root.** Use `pageX` (`page` defaults to 0, `pageSize` to 50 with a 5000 cap, `page*pageSize` capped at 100000): one call returns `items + total + hasMore`. The `listX` contract is unchanged; a standalone `countX` is not generated.
 - **You expect relations to appear automatically.** In `1.0.0` only `fields` and `computes` are typed; `defn.relations` is not auto-exposed.
 - **You want to inline JSON arguments.** `condition`, `sort`, `input` and `set` accept variables only; inline literals are rejected by deliberate design.
 - **You rely on output aliases.** v0 serializes by field name and drops aliases.

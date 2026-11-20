@@ -14,7 +14,7 @@
 }
 ```
 
-`expect` 支持键：`dataKeys`（data 中必须出现的键）、`gql`（投影下推后应生成的 GQL 串，末步对齐，用于锁定 spec/02 映射）、`paramsLimit`（params.l 期望值，锁定 limit 守卫缺省语义）、`errorCodePrefix`（errors 首条 message 的稳定前缀，锁定守卫错误契约）。JSON 一律经 variables 传入（spec/01：JSON 标量不接受内联字面量，三端一致）。
+`expect` 支持键：`dataKeys`（data 中必须出现的键）、`gql`（投影下推后应生成的 GQL 串，末步对齐，用于锁定 spec/02 映射）、`paramsLimit`（params.l 期望值，锁定 limit 守卫缺省语义）、`errorCodePrefix`（errors 首条 message 的稳定前缀，锁定守卫错误契约）；`pageX` 另支持 `pageField`（要检查的分页根字段名）+ `total` / `hasMore` / `page` / `pageSize` / `itemsLength`（对该字段返回值的断言）与 `paramsPage` / `paramsPageSize`（宿主调用 params 的期望值）。JSON 一律经 variables 传入（spec/01：JSON 标量不接受内联字面量，三端一致）。
 
 ## 现状
 

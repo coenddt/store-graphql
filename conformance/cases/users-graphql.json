@@ -90,6 +90,125 @@
       "query": "mutation { deleteUser(id: \"u1\") }",
       "variables": {},
       "expect": { "dataKeys": ["deleteUser"] }
+    },
+    {
+      "op": "mutation",
+      "query": "mutation($input: JSON!) { createUser(input: $input) { _id } }",
+      "variables": { "input": { "name": "b" } },
+      "expect": { "dataKeys": ["createUser"], "_comment": "pageX 用例前置：重置为 3 行" }
+    },
+    {
+      "op": "mutation",
+      "query": "mutation($input: JSON!) { createUser(input: $input) { _id } }",
+      "variables": { "input": { "name": "c" } },
+      "expect": { "dataKeys": ["createUser"] }
+    },
+    {
+      "op": "mutation",
+      "query": "mutation($input: JSON!) { createUser(input: $input) { _id } }",
+      "variables": { "input": { "name": "d" } },
+      "expect": { "dataKeys": ["createUser"] }
+    },
+    {
+      "op": "query",
+      "query": "query { pageUser { items { name } total hasMore page pageSize } }",
+      "variables": {},
+      "expect": {
+        "dataKeys": ["pageUser"],
+        "pageField": "pageUser",
+        "gql": "User { name }",
+        "paramsPage": 0,
+        "paramsPageSize": 50,
+        "total": 3,
+        "hasMore": false,
+        "page": 0,
+        "pageSize": 50,
+        "itemsLength": 3,
+        "_comment": "spec/01 pageX：缺省 page=0 / pageSize=50；total 由宿主计数返回"
+      }
+    },
+    {
+      "op": "query",
+      "query": "query($c: JSON, $s: JSON, $p: Int) { pageUser(condition: $c, sort: $s, page: $p) { items { name } total hasMore page pageSize } }",
+      "variables": { "c": { "name": "b" }, "s": { "name": 1 }, "p": 0 },
+      "expect": {
+        "pageField": "pageUser",
+        "gql": "User($condition:@c0,$sort:@s1) { name }",
+        "paramsPage": 0,
+        "paramsPageSize": 50,
+        "total": 1,
+        "hasMore": false,
+        "itemsLength": 1,
+        "_comment": "spec/02：page/pageSize 不进 GQL 参数头；condition/sort 照常下推"
+      }
+    },
+    {
+      "op": "query",
+      "query": "query($p: Int, $ps: Int) { pageUser(page: $p, pageSize: $ps) { items { name } total hasMore page pageSize } }",
+      "variables": { "p": 0, "ps": 2 },
+      "expect": {
+        "pageField": "pageUser",
+        "paramsPage": 0,
+        "paramsPageSize": 2,
+        "total": 3,
+        "hasMore": true,
+        "page": 0,
+        "pageSize": 2,
+        "itemsLength": 2,
+        "_comment": "hasMore 边界：(0+1)*2 < 3 ⇒ true"
+      }
+    },
+    {
+      "op": "query",
+      "query": "query($p: Int, $ps: Int) { pageUser(page: $p, pageSize: $ps) { items { name } total hasMore page pageSize } }",
+      "variables": { "p": 1, "ps": 2 },
+      "expect": {
+        "pageField": "pageUser",
+        "paramsPage": 1,
+        "paramsPageSize": 2,
+        "total": 3,
+        "hasMore": false,
+        "page": 1,
+        "pageSize": 2,
+        "itemsLength": 1,
+        "_comment": "hasMore 边界：(1+1)*2 < 3 ⇒ false"
+      }
+    },
+    {
+      "op": "query",
+      "query": "query($p: Int, $ps: Int) { pageUser(page: $p, pageSize: $ps) { total } }",
+      "variables": { "p": 21, "ps": 5000 },
+      "expect": {
+        "errorCodePrefix": "ERR_LIMIT:",
+        "_comment": "spec/01：page*pageSize 超深翻页上限 100000 ⇒ 抛错"
+      }
+    },
+    {
+      "op": "query",
+      "query": "query($ps: Int) { pageUser(pageSize: $ps) { total } }",
+      "variables": { "ps": 5001 },
+      "expect": {
+        "errorCodePrefix": "ERR_LIMIT:",
+        "_comment": "spec/01：pageSize 上限 5000 ⇒ 抛错（不静默夹取）"
+      }
+    },
+    {
+      "op": "query",
+      "query": "query($p: Int) { pageUser(page: $p) { total } }",
+      "variables": { "p": -1 },
+      "expect": {
+        "errorCodePrefix": "ERR_LIMIT:",
+        "_comment": "spec/01：page 必须非负"
+      }
+    },
+    {
+      "op": "query",
+      "query": "query($c: JSON, $p: Int) { pageUser(condition: $c, page: $p) { total } }",
+      "variables": { "c": { "name": { "$near": { "$vector": [0.1, 0.2], "$limit": 2 } } }, "p": 0 },
+      "expect": {
+        "errorCodePrefix": "ERR_LIMIT:",
+        "_comment": "spec/01：pageX 与 $near 向量检索互斥"
+      }
     }
   ]
 }

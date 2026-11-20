@@ -160,6 +160,28 @@ func buildModelEntry(
 		},
 		Resolve: resolveWithOverride("Query.list"+name, makeList(st, name, allFields)),
 	}
+	// spec/01 pageX：列表 + total + hasMore（宿主 QueryWithCount 的薄暴露）
+	pageType := graphql.NewObject(graphql.ObjectConfig{
+		Name:        name + "Page",
+		Description: name + " 分页结果（items + total + hasMore + page + pageSize）",
+		Fields: graphql.Fields{
+			"items":    &graphql.Field{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(modelType)))},
+			"total":    &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"hasMore":  &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"page":     &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"pageSize": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+		},
+	})
+	queryFields["page"+name] = &graphql.Field{
+		Type: graphql.NewNonNull(pageType),
+		Args: graphql.FieldConfigArgument{
+			"condition": &graphql.ArgumentConfig{Type: jsonScalar},
+			"sort":      &graphql.ArgumentConfig{Type: jsonScalar},
+			"page":      &graphql.ArgumentConfig{Type: graphql.Int},
+			"pageSize":  &graphql.ArgumentConfig{Type: graphql.Int},
+		},
+		Resolve: resolveWithOverride("Query.page"+name, makePage(st, name, allFields)),
+	}
 	readonly := false
 	if xg != nil {
 		readonly, _ = xg["readonly"].(bool)

@@ -35,9 +35,8 @@ function shouldInclude(node, vars) {
   return true;
 }
 
-/** resolveInfo → GQL 投影串（fragments 展开、指令求值、空投影回退 _id） */
-function projectionFromResolveInfo(info) {
-  const root = info.fieldNodes.find((n) => n.kind === Kind.FIELD) || info.fieldNodes[0];
+/** selectionSet → GQL 投影串（fragments 展开、指令求值、空投影回退 _id） */
+function projectionFromSelectionSet(info, selectionSet) {
   const vars = info.variableValues || {};
   /** 单节点投影拼装：FIELD 拼「名 { 子投影 }」，fragment 原地展开 */
   const walk = (sel) => {
@@ -58,8 +57,49 @@ function projectionFromResolveInfo(info) {
     }
     return null;
   };
-  const parts = root.selectionSet.selections.map(walk).filter(Boolean).join(', ');
+  const parts = selectionSet ? selectionSet.selections.map(walk).filter(Boolean).join(', ') : '';
   return parts || '_id'; // spec/02：空投影回退，保证 GQL 串合法
 }
 
-module.exports = { isConditionalDirective, directiveIfValue, shouldInclude, projectionFromResolveInfo };
+/** resolveInfo → GQL 投影串（根字段的 selectionSet） */
+function projectionFromResolveInfo(info) {
+  const root = info.fieldNodes.find((n) => n.kind === Kind.FIELD) || info.fieldNodes[0];
+  return projectionFromSelectionSet(info, root.selectionSet);
+}
+
+/** 在 selectionSet 中按字段名查找（fragment 展开、seen 防环） */
+function findFieldByName(info, selectionSet, name, seen = new Set()) {
+  for (const sel of selectionSet ? selectionSet.selections : []) {
+    if (sel.kind === Kind.FIELD && sel.name.value === name) return sel;
+    if (sel.kind === Kind.INLINE_FRAGMENT) {
+      const hit = findFieldByName(info, sel.selectionSet, name, seen);
+      if (hit) return hit;
+    }
+    if (sel.kind === Kind.FRAGMENT_SPREAD) {
+      const fragName = sel.name.value;
+      if (seen.has(fragName)) continue;
+      const frag = info.fragments && info.fragments[fragName];
+      if (frag) {
+        const hit = findFieldByName(info, frag.selectionSet, name, new Set([...seen, fragName]));
+        if (hit) return hit;
+      }
+    }
+  }
+  return null;
+}
+
+/** 取根字段下指定子字段的 selection 投影（pageX 的 items 用） */
+function projectionForChild(info, childName) {
+  const root = info.fieldNodes.find((n) => n.kind === Kind.FIELD) || info.fieldNodes[0];
+  const child = findFieldByName(info, root && root.selectionSet, childName);
+  return projectionFromSelectionSet(info, child && child.selectionSet);
+}
+
+module.exports = {
+  isConditionalDirective,
+  directiveIfValue,
+  shouldInclude,
+  projectionFromSelectionSet,
+  projectionFromResolveInfo,
+  projectionForChild,
+};
